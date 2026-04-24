@@ -1,0 +1,16 @@
+[package]
+name = "demo-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+amc-core = { path = "../amc-core" }
+anyhow.workspace = true
+clap.workspace = true
+quinn.workspace = true
+rcgen = "0.14.7"
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
