@@ -1,0 +1,42 @@
+{
+  "suite_name": "local_live_immediate_amc_preview",
+  "host": "127.0.0.1",
+  "base_port": 5320,
+  "cert_path": "demo-cert.der",
+  "replay_manifest": "data/processed/manifests/sintel_trailer_replay.json",
+  "server_startup_delay_ms": 1500,
+  "results_root": "results",
+  "network_scenarios": [
+    {
+      "name": "local_loopback",
+      "kind": "local",
+      "description": "No imposed impairment; local loopback single-run AMC preview proof on Windows.",
+      "rtt_ms": 1,
+      "loss_percent": 0.0,
+      "bandwidth_mbps": 1000,
+      "tc_netem_enabled": false,
+      "tc_netem": null,
+      "notes": "Single-run local scenario to avoid the known Windows multi-run harness hang."
+    }
+  ],
+  "semantic_profile": {
+    "startup_segments": 3,
+    "startup_importance": "critical",
+    "vod_steady_importance": "normal",
+    "live_steady_importance": "high",
+    "independent_segment_interval": 4,
+    "dependent_depth": 1,
+    "vod_freshness_window_ms": 30000,
+    "live_freshness_window_ms": 1000
+  },
+  "runs": [
+    {
+      "name": "live_immediate_amc_preview",
+      "controller": "amc_preview",
+      "mode": "live",
+      "pace": "immediate",
+      "network_scenario": "local_loopback",
+      "vod_deadline_slack_ms": 30000
+    }
+  ]
+}

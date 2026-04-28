@@ -1,3 +1,7 @@
+## Agent Behavior
+
+- For any substantial feature implementation, refactor, fix, or chore, keep a log book under `.github/logs/*` with files named `dd_mm_yyyy.md`.
+
 # Project Guidelines
 
 ** This is a living document, not a static spec. It should evolve as the project evolves, and it should be updated whenever the project shape, scope, or workflow changes. **
@@ -26,11 +30,14 @@
 
 - Optimize for repeatability and traceability.
 - Prefer trace-driven or synthetic multimedia workloads over full media stacks unless realism clearly improves the evaluation.
+- Use Linux `tc netem` as the preferred path-shaping mechanism for reproducible RTT, loss, and bandwidth control. Do not model full network topologies unless topology itself becomes part of the research question.
 - Keep one semantic traffic class per connection unless mixed-traffic behavior is the specific subject under test.
 - Every benchmark change should state which metric, scenario, or hypothesis it affects.
 - Use streams for both VOD and live traffic in the main claim. Keep QUIC datagrams out of the primary evaluation unless they are a separate experimental axis.
 - The application-to-transport interface should expose codec-agnostic semantic inputs such as deadline, importance, dependency depth, and freshness window.
 - Do not assume raw codec labels such as GOP or frame type are directly meaningful to the congestion-control core without being translated into sender-visible utility signals.
+- Prefer an offline `ffmpeg` and `ffprobe` preprocessing pipeline that converts open media assets into replayable segment sets and semantic traces rather than parsing full media stacks in the runtime sender.
+- Keep large source media under `data/raw/` and out of Git. Small derived manifests or traces may be versioned only if they are lightweight and necessary for reproducibility.
 
 ## Measurement and reporting
 

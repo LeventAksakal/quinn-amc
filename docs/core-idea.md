@@ -23,6 +23,8 @@ The design should let the application annotate outgoing units with a compact, co
 
 The transport policy then uses those signals to guide congestion response and recovery decisions.
 
+The runtime system should consume preprocessed traces or stream segments derived offline with `ffmpeg` and `ffprobe`, not a full in-process media stack.
+
 ## Scope boundaries
 
 - Main transport substrate: QUIC streams
@@ -35,6 +37,7 @@ Out of primary scope:
 - claiming to replace BBRv2
 - relying on QUIC datagrams for the core result
 - making broad TCP comparison claims as the main evaluation axis
+- building a full player, encoder, or topology emulator as part of the main artifact
 
 ## Research framing
 

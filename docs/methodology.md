@@ -21,6 +21,8 @@ The comparison should use the same application workload definitions, network con
 
 ## Workload model
 
+The implementation should stay trace-driven. Use `ffmpeg` and `ffprobe` offline to turn open source clips into replayable segment sets and timing manifests rather than embedding a full player or media pipeline in the Quinn client.
+
 ### VOD
 
 VOD should model buffered delivery where late arrival is often acceptable as long as sustained throughput is high enough to avoid rebuffering.
@@ -28,6 +30,7 @@ VOD should model buffered delivery where late arrival is often acceptable as lon
 Suggested workload properties:
 
 - chunked object or frame-group delivery over reliable streams
+- bounded prefetch ahead of playout
 - burst structure resembling encoded video segments or GOP-level variation
 - receiver-side playout buffer model
 - metrics that emphasize continuity rather than strict per-frame deadlines
@@ -39,6 +42,7 @@ Live traffic should model freshness-sensitive delivery where old data loses valu
 Suggested workload properties:
 
 - timestamped frames generated at fixed cadence
+- small lookahead and strong freshness decay
 - per-frame or per-chunk deadlines
 - reliable QUIC stream transport for the main claim
 - accounting for expired or stale payloads as misses rather than useful delivery
@@ -53,6 +57,28 @@ Initial matrix:
 - loss rate: 0%, 0.5%, 2%
 - bottleneck bandwidth: 10 Mbps, 50 Mbps
 - queueing regime: fixed bottleneck queue or emulator default
+
+Preferred implementation path:
+
+- Linux `tc netem` for delay and loss
+- `tbf` or `htb` for bandwidth limitation
+- no full topology emulation unless the research question changes
+
+Recommended host topology for the primary experiments:
+
+- one Linux host
+- client and server isolated by containers or network namespaces
+- a Linux bridge or veth pair between them
+- `tc` applied on that virtual link rather than on loopback
+- distroless runtime images are fine when `tc` is configured by the host rather than from inside the container
+
+Recommended control plane split:
+
+- host-side runner owns container lifecycle and `tc` mutation
+- raw transfer reports are written per run under `results/raw/`
+- the harness analysis step consumes those raw reports and writes processed outputs under `results/processed/`
+
+Use loopback only for smoke tests. Avoid using two different VPS instances for the main reported results because the public Internet path reduces repeatability.
 
 Each experiment cell should be repeated with fixed seeds where applicable.
 
@@ -110,11 +136,20 @@ Use ablations where possible:
 ## Experimental implementation plan
 
 1. Establish a minimal Quinn client-server path.
-2. Add scenario configuration files for bandwidth, RTT, and loss.
-3. Implement trace-driven VOD and live generators.
-4. Add baseline controller selection and result export.
-5. Implement AMC controller and compare under the same matrix.
-6. Produce processed tables and figures for the report.
+2. Add open media download and preprocessing scripts under `scripts/media/`.
+3. Add scenario configuration files for bandwidth, RTT, and loss.
+4. Implement trace-driven VOD and live generators from preprocessed media artifacts.
+5. Add baseline controller selection and result export.
+6. Implement AMC controller and compare under the same matrix.
+7. Produce processed tables and figures for the report.
+
+## Artifact inputs
+
+Recommended media artifact split:
+
+- `data/raw/` for downloaded open source clips, ignored by Git
+- `data/processed/segments/` for stream-friendly segment outputs
+- `data/processed/manifests/` for replay manifests, semantic hints, and `ffprobe`-derived metadata
 
 ## Artifact organization
 

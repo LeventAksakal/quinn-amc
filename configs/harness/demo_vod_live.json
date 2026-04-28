@@ -1,0 +1,67 @@
+{
+  "suite_name": "demo_vod_live",
+  "host": "127.0.0.1",
+  "base_port": 5100,
+  "cert_path": "demo-cert.der",
+  "replay_manifest": "data/processed/manifests/sintel_trailer_replay.json",
+  "server_startup_delay_ms": 250,
+  "results_root": "results",
+  "network_scenarios": [
+    {
+      "name": "local_loopback",
+      "kind": "local",
+      "description": "No imposed impairment; baseline local loopback run.",
+      "rtt_ms": 1,
+      "loss_percent": 0.0,
+      "bandwidth_mbps": 1000,
+      "tc_netem_enabled": false,
+      "tc_netem": null,
+      "notes": "Use this on Windows or before Linux tc integration is available."
+    },
+    {
+      "name": "linux_tc_preview",
+      "kind": "linux_tc_netem",
+      "description": "Planned tc netem profile for later impaired runs.",
+      "rtt_ms": 80,
+      "loss_percent": 0.5,
+      "bandwidth_mbps": 10,
+      "tc_netem_enabled": false,
+      "tc_netem": {
+        "interface": "veth-amc0",
+        "delay_jitter_ms": 5,
+        "limit_packets": 128,
+        "rate_burst_kbit": 256,
+        "rate_latency_ms": 50
+      },
+      "notes": "Placeholder profile only; the harness records it now but does not apply tc on this host."
+    }
+  ],
+  "semantic_profile": {
+    "startup_segments": 3,
+    "startup_importance": "critical",
+    "vod_steady_importance": "normal",
+    "live_steady_importance": "high",
+    "independent_segment_interval": 4,
+    "dependent_depth": 1,
+    "vod_freshness_window_ms": 30000,
+    "live_freshness_window_ms": 1000
+  },
+  "runs": [
+    {
+      "name": "vod_realtime",
+      "controller": "cubic",
+      "mode": "vod",
+      "pace": "realtime",
+      "network_scenario": "local_loopback",
+      "vod_deadline_slack_ms": 30000
+    },
+    {
+      "name": "live_realtime",
+      "controller": "cubic",
+      "mode": "live",
+      "pace": "realtime",
+      "network_scenario": "local_loopback",
+      "vod_deadline_slack_ms": 30000
+    }
+  ]
+}

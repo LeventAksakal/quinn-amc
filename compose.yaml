@@ -1,0 +1,73 @@
+name: quinn-amc
+
+services:
+  harness:
+    profiles: ["harness"]
+    build:
+      context: .
+      dockerfile: docker/harness.Dockerfile
+    image: quinn-amc/harness:distroless
+    command: ["analyze-suite", "--config", "${HARNESS_CONFIG:-/workspace/configs/harness/demo_vod_live.json}"]
+    networks:
+      - quinn-amc
+    volumes:
+      - ./configs:/workspace/configs:ro
+      - ./data:/workspace/data:ro
+      - ./results:/workspace/results
+
+  demo-server:
+    profiles: ["demo-server"]
+    build:
+      context: .
+      dockerfile: docker/demo-server.Dockerfile
+    image: quinn-amc/demo-server:distroless
+    command:
+      [
+        "--bind",
+        "${DEMO_SERVER_BIND:-0.0.0.0:5001}",
+        "--cert-out",
+        "${DEMO_SERVER_CERT_OUT:-/workspace/results/demo-cert.der}",
+        "--report-out",
+        "${DEMO_SERVER_REPORT_OUT:-/workspace/results/raw/demo/container_demo_report.json}"
+      ]
+    networks:
+      - quinn-amc
+    ports:
+      - "${DEMO_SERVER_PORT:-5001}:5001/udp"
+    volumes:
+      - ./results:/workspace/results
+
+  demo-client:
+    profiles: ["demo-client"]
+    build:
+      context: .
+      dockerfile: docker/demo-client.Dockerfile
+    image: quinn-amc/demo-client:distroless
+    command:
+      [
+        "--server",
+        "${DEMO_CLIENT_SERVER:-demo-server:5001}",
+        "--server-name",
+        "${DEMO_CLIENT_SERVER_NAME:-localhost}",
+        "--cert",
+        "${DEMO_CLIENT_CERT:-/workspace/results/demo-cert.der}",
+        "--replay-manifest",
+        "${DEMO_CLIENT_REPLAY_MANIFEST:-/workspace/data/processed/manifests/sintel_trailer_replay.json}",
+        "--pace",
+        "${DEMO_CLIENT_PACE:-realtime}",
+        "--mode",
+        "${DEMO_CLIENT_MODE:-live}",
+        "--vod-deadline-slack-ms",
+        "${DEMO_CLIENT_VOD_DEADLINE_SLACK_MS:-30000}"
+      ]
+    depends_on:
+      - demo-server
+    networks:
+      - quinn-amc
+    volumes:
+      - ./data:/workspace/data:ro
+      - ./results:/workspace/results
+
+networks:
+  quinn-amc:
+    driver: bridge

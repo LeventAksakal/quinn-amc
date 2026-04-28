@@ -46,6 +46,11 @@ Start with a small matrix:
 - loss: 0%, 0.5%, 2%
 - bandwidth: 10 Mbps, 50 Mbps
 
+Preferred path-control mechanism:
+
+- Linux `tc netem` for delay and loss
+- `tbf` or `htb` for bandwidth shaping when needed
+
 Then add competition cases:
 
 - AMC vs NewReno
@@ -58,6 +63,15 @@ Then add competition cases:
 - deadlines only
 - deadlines plus importance
 - deadlines plus importance plus dependency depth
+
+## Workload artifact path
+
+The first benchmarkable workload path should be:
+
+1. open media asset in `data/raw/`
+2. offline `ffmpeg` segmentation and `ffprobe` manifest extraction
+3. Quinn client timed replay over streams
+4. receiver logging of arrival time, lateness, and usefulness
 
 ## Secondary work if time permits
 

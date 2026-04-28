@@ -1,0 +1,9 @@
+.git
+.github/logs
+.vscode
+target
+results
+data/raw
+data/processed/segments
+data/processed/manifests
+demo-cert.der

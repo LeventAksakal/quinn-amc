@@ -259,6 +259,8 @@ dependencies = [
  "anyhow",
  "clap",
  "quinn",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -271,8 +273,11 @@ dependencies = [
  "amc-core",
  "anyhow",
  "clap",
+ "demo-client",
  "quinn",
  "rcgen",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -359,11 +364,16 @@ dependencies = [
 name = "harness"
 version = "0.1.0"
 dependencies = [
+ "amc-core",
  "anyhow",
  "clap",
+ "demo-client",
+ "demo-server",
  "serde",
  "serde_json",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

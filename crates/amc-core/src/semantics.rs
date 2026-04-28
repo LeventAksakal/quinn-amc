@@ -1,12 +1,25 @@
 use std::time::Duration;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum TrafficClass {
     Vod,
     Live,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+impl TrafficClass {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Vod => "vod",
+            Self::Live => "live",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
 pub enum Importance {
     Background,
     Normal,
@@ -14,7 +27,18 @@ pub enum Importance {
     Critical,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+impl Importance {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Background => "background",
+            Self::Normal => "normal",
+            Self::High => "high",
+            Self::Critical => "critical",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct DependencyDepth(pub u8);
 
 #[derive(Debug, Clone, PartialEq, Eq)]

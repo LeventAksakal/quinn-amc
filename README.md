@@ -33,14 +33,29 @@ crates/
   demo-server/   # receiver / sink / experiment server
   harness/       # scenario orchestration, metrics collection, result export
 
+data/
+  raw/           # downloaded open media sources, kept out of Git
+  processed/     # ffmpeg outputs such as CMAF-style fragments and replay manifests
+
+scripts/
+  media/         # media download and preprocessing helpers
+
 docs/
   core-idea.md   # thesis, scope, and contribution framing
   design.md      # semantic interface and transport-policy design
   evaluation.md  # benchmark questions, metrics, and scenario plan
   methodology.md # consolidated experiment and reporting plan
+  replay-semantics.md # current preprocessing-to-semantic mapping rules
+
+docker/
+  demo-client.Dockerfile
+  demo-server.Dockerfile
+  harness.Dockerfile
+  harness-tc.Dockerfile
 
 .github/
   copilot-instructions.md
+  logs/
 ```
 
 ## Current dependency stance
@@ -86,17 +101,30 @@ See the project notes under `docs/`:
 - [docs/evaluation.md](docs/evaluation.md) for benchmark questions and metrics
 - [docs/methodology.md](docs/methodology.md) for the consolidated experiment plan
 
+## Data pipeline
+
+The media path should stay trace-driven and reproducible:
+
+1. Download a small set of openly licensed source clips into `data/raw/`.
+2. Use `ffmpeg` to create CMAF-style fragmented MP4 outputs and a DASH manifest offline.
+3. Generate a lightweight replay manifest that the client can consume without embedding a full player stack.
+4. Attach lightweight semantic hints during preprocessing so the harness can score replay units against `amc-core`.
+5. Keep the runtime sender focused on segment replay and semantic metadata, not container parsing or transcoding.
+
+For path shaping, prefer Linux `tc netem` plus a rate limiter such as `tbf` or `htb`. That gives controllable end-to-end behavior without building a full topology model.
+
 ## Near-term implementation plan
 
-1. Extend the working Quinn demo client and server path into repeatable traffic-generation flows.
-2. Define an application-to-transport semantic interface for `vod` and `live` traffic classes.
-3. Implement baseline runs with Quinn-provided congestion controllers.
-4. Add the AMC policy and congestion-control core under the same scenario matrix.
-5. Export processed results and figures for the final report.
+1. Extend the working Quinn demo client and server path into timed replay of preprocessed CMAF segments.
+2. Add `ffmpeg` and `ffprobe`-based preprocessing scripts and source media handling under `data/`.
+3. Define an application-to-transport semantic interface for `vod` and `live` traffic classes.
+4. Implement baseline runs with Quinn-provided congestion controllers.
+5. Add the AMC policy and congestion-control core under the same scenario matrix.
+6. Export processed results and figures for the final report.
 
 ## Demo run
 
-The current demo binaries establish a Quinn connection over QUIC, exchange one bidirectional stream message, and use a self-signed certificate that the client explicitly trusts.
+The current demo binaries establish a Quinn connection over QUIC and can transfer a full preprocessed CMAF-style asset from the client to the server using a replay manifest. The server also records per-segment arrival timing and usefulness observations into a raw JSON report.
 
 Start the server in one terminal:
 
@@ -107,14 +135,135 @@ cargo run -p demo-server -- --bind 127.0.0.1:5001 --cert-out demo-cert.der
 Then run the client in a second terminal:
 
 ```powershell
-cargo run -p demo-client -- --server 127.0.0.1:5001 --cert demo-cert.der --message "probe from demo-client"
+cargo run -p demo-client -- --server 127.0.0.1:5001 --cert demo-cert.der --replay-manifest data/processed/manifests/big_buck_bunny_replay.json --pace realtime --mode live
 ```
 
 Expected behavior:
 
-- the server writes `demo-cert.der`, accepts one connection, reads one request, and replies with `echo:<message>`
-- the client connects using `localhost` as the certificate name, sends the configured message, and logs the echoed response
+- the server writes `demo-cert.der`, accepts one connection, receives the init segment plus all media fragments, writes a raw JSON report under `results/raw/`, and replies with a JSON transfer summary
+- the client connects using `localhost` as the certificate name, reads the replay manifest, sends the full processed stream, and logs the returned summary including useful versus late media segments
+
+## Harness run
+
+The harness now runs a config-defined suite so both `vod` and `live` replay modes can be exercised back to back against the same processed asset.
+
+The default suite config lives at `configs/harness/demo_vod_live.json` and defines:
+
+- a `vod_realtime` run
+- a `live_realtime` run
+- per-run baseline controller selection
+- named network scenarios, including a Linux `tc netem` placeholder profile for later impaired runs
+- a shared semantic profile that complements per-segment semantic hints stored in the replay manifest
+- a shared replay manifest and results root
+
+Run it with:
+
+```powershell
+cargo run -p harness -- run-suite --config configs/harness/demo_vod_live.json
+```
+
+Expected outputs:
+
+- raw per-run server reports under `results/raw/harness/`
+- one suite summary under `results/processed/harness/demo_vod_live_summary.json`
+- one per-run AMC analysis under `results/processed/harness/*_amc.json`
+
+Each run now carries a `controller` field in harness config, and raw plus processed outputs record the selected baseline controller.
+
+The AMC analysis now prefers semantic hints from preprocessing artifacts and only falls back to harness defaults when a manifest does not provide them.
+
+Current limitation:
+
+- the harness records named `linux_tc_netem` scenarios in config and output, but does not apply them yet on this Windows host; actual `tc` orchestration should be added when running on Linux
+
+## Linux Experiment Topology
+
+For the primary experiments, use one Linux host, not two different VPS instances.
+
+Preferred setup:
+
+- run client and server in separate containers or network namespaces on the same Linux machine
+- connect them through a Linux bridge or veth pair
+- apply `tc netem` and `tbf` on that virtual link
+
+Avoid for the main claim:
+
+- two separate VPS hosts over the public Internet, because uncontrolled path variation hurts reproducibility
+- `tc` on loopback as the primary experiment setup, because loopback behavior is too special to trust as the main benchmark path
+
+Loopback is still acceptable for smoke tests and local bring-up.
+
+## Container Images
+
+Container build files are available under `docker/` for Linux-host deployment:
+
+```powershell
+docker build -f docker/demo-client.Dockerfile -t quinn-amc/demo-client .
+docker build -f docker/demo-server.Dockerfile -t quinn-amc/demo-server .
+docker build -f docker/harness.Dockerfile -t quinn-amc/harness .
+```
+
+Practical note:
+
+- the default client, server, and harness images are distroless and assume network shaping is applied externally by the Linux host or VPS
+- if you want the harness container itself to execute `tc`, build `docker/harness-tc.Dockerfile` instead and grant it `NET_ADMIN`
+- processed manifests and segments should be mounted into `/workspace/data`, and results should be mounted from `/workspace/results`
+
+`tc` requires Linux. It is part of Linux traffic control and depends on Linux qdisc support in the kernel. So if the harness is the component applying impairment, it must run on Linux and have access to the target Linux interface. Client and server do not inherently need Linux for basic replay, but the shaped experiment topology does.
+
+Recommended default:
+
+- keep all three runtime images distroless
+- configure `tc` on the Linux VPS host or on host-owned namespaces/bridges
+- let the harness only record and analyze the named scenario, not mutate qdisc state from inside the container
+
+That is the cleaner setup for reproducible experiments.
+
+## Compose
+
+`compose.yaml` defines a shared Docker network for the distroless images.
+
+Examples:
+
+```powershell
+docker compose --profile harness up --build harness
+docker compose --profile demo-server up --build demo-server
+docker compose --profile demo-client up --build demo-client
+```
+
+Notes:
+
+- the harness service runs the config-driven suite inside a single container because the current harness links the demo client and server as libraries
+- the standalone demo client and server services are for smoke tests and manual replay runs
+- the demo client depends on the server, but you should still let the server start and write its certificate before launching the client profile in a real run
+
+## VPS Architecture
+
+The recommended Linux VPS experiment architecture is:
+
+1. The VPS host owns `tc` and applies shaping on the server container host-veth.
+2. The demo server and demo client run as isolated containers on the same Docker bridge network.
+3. The host-side experiment runner iterates the scenario matrix: apply `tc`, run server and client, collect raw report, clear `tc`, move to the next run.
+4. The distroless harness container runs only the post-run `analyze-suite` step over the collected raw reports.
+
+That means the current `harness` binary has two roles:
+
+- `run-suite`: local in-process orchestration for development on one machine
+- `analyze-suite`: offline processing of raw reports produced by the VPS host runner
+
+For the Linux VPS flow, use the host-side runner:
+
+```bash
+bash scripts/experiments/run_linux_vps_suite.sh configs/harness/vps_demo_vod_live.json
+```
+
+The VPS config at `configs/harness/vps_demo_vod_live.json` is the starting point for that path.
+
+Current bootstrap limitation:
+
+- the host runner applies `tc` on the server container host-veth, which matches the main client-to-server media flow and is a reasonable first controlled path for this upload-style experiment
+- if later you need explicitly symmetric shaping, extend the host runner to pre-create and shape both endpoint links or move to host-managed namespaces with paired veth links
 
 ## Build status
 
-The workspace structure is bootstrapped, the demo client/server handshake path is working, and the AMC controller work remains to be built on top of that baseline.
+The workspace structure is bootstrapped, the media pipeline now targets CMAF-style fragments plus replay manifests, and the demo client/server path can transfer a full processed asset over Quinn.
