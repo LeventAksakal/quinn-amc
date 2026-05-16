@@ -7,6 +7,9 @@ CONFIG_ABS="$WORKSPACE_ROOT/$CONFIG_PATH"
 COMPOSE_FILE="$WORKSPACE_ROOT/compose.yaml"
 ACTIVE_TC_INTERFACE=""
 CURRENT_RUN_NAME=""
+RESULT_OWNER_USER="${SUDO_USER:-$(id -un)}"
+RESULT_OWNER_GROUP="$(id -gn "$RESULT_OWNER_USER" 2>/dev/null || id -gn)"
+RESULT_OWNER_SPEC="$RESULT_OWNER_USER:$RESULT_OWNER_GROUP"
 
 log() {
   printf '[run_linux_vps_suite] %s\n' "$*"
@@ -33,8 +36,25 @@ require_command ip
 [[ -f "$CONFIG_ABS" ]] || fail "config not found: $CONFIG_ABS"
 [[ -f "$COMPOSE_FILE" ]] || fail "compose file not found: $COMPOSE_FILE"
 
+export DOCKER_BUILDKIT="${DOCKER_BUILDKIT:-1}"
+export COMPOSE_DOCKER_CLI_BUILD="${COMPOSE_DOCKER_CLI_BUILD:-1}"
+
 can_sudo_non_interactive() {
   sudo -n true >/dev/null 2>&1
+}
+
+run_as_root() {
+  if [[ "$EUID" -eq 0 ]]; then
+    "$@"
+    return 0
+  fi
+
+  if can_sudo_non_interactive; then
+    sudo "$@"
+    return 0
+  fi
+
+  fail "root privileges required to run: $*"
 }
 
 ensure_directory_writable() {
@@ -46,11 +66,23 @@ ensure_directory_writable() {
   fi
 
   if can_sudo_non_interactive; then
-    sudo mkdir -p "$dir_path"
-    sudo chown -R "$(id -un):$(id -gn)" "$dir_path"
+    run_as_root mkdir -p "$dir_path"
+    run_as_root chown -R "$RESULT_OWNER_SPEC" "$dir_path"
   fi
 
   [[ -d "$dir_path" && -w "$dir_path" ]] || fail "directory is not writable: $dir_path"
+}
+
+normalize_result_ownership() {
+  local path="$1"
+
+  [[ -e "$path" ]] || return 0
+
+  if [[ "$EUID" -ne 0 ]] && ! can_sudo_non_interactive; then
+    return 0
+  fi
+
+  run_as_root chown -R "$RESULT_OWNER_SPEC" "$path"
 }
 
 remove_output_file() {
@@ -64,8 +96,8 @@ remove_output_file() {
     return 0
   fi
 
-  if can_sudo_non_interactive; then
-    sudo rm -f "$file_path"
+  if [[ "$EUID" -eq 0 ]] || can_sudo_non_interactive; then
+    run_as_root rm -f "$file_path"
     return 0
   fi
 
@@ -78,6 +110,7 @@ prepare_output_paths() {
   ensure_directory_writable "$WORKSPACE_ROOT/results/raw/harness"
   ensure_directory_writable "$WORKSPACE_ROOT/results/processed"
   ensure_directory_writable "$WORKSPACE_ROOT/results/processed/harness"
+  normalize_result_ownership "$WORKSPACE_ROOT/results"
 }
 
 cleanup_tc_interface() {
@@ -99,6 +132,7 @@ cleanup() {
 
   cleanup_tc_interface
   cleanup_demo_server
+  normalize_result_ownership "$WORKSPACE_ROOT/results"
 
   if [[ "$exit_code" -eq 0 ]]; then
     log "cleanup: complete"
@@ -311,6 +345,7 @@ for run_name in $RUN_NAMES; do
   DEMO_CLIENT_VOD_DEADLINE_SLACK_MS="$vod_deadline_slack_ms" \
   docker compose -f "$COMPOSE_FILE" --profile demo-server --profile demo-client run --rm --no-deps demo-client
 
+  normalize_result_ownership "$WORKSPACE_ROOT/results"
   log "client completed: run=$run_name report=$report_on_host"
 
   cleanup_tc_interface
@@ -323,5 +358,6 @@ CURRENT_RUN_NAME="analyze-suite"
 HARNESS_CONFIG="$HARNESS_CONFIG_IN_CONTAINER" \
 docker compose -f "$COMPOSE_FILE" --profile harness run --rm harness analyze-suite --config "$HARNESS_CONFIG_IN_CONTAINER"
 
+normalize_result_ownership "$WORKSPACE_ROOT/results"
 CURRENT_RUN_NAME=""
 log "suite analysis written under $WORKSPACE_ROOT/results/processed/harness"

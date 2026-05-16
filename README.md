@@ -119,6 +119,20 @@ sudo bash scripts/experiments/run_linux_vps_suite.sh configs/harness/vps_baselin
 sudo bash scripts/experiments/run_linux_vps_suite.sh configs/harness/vps_demo_vod_live.json
 ```
 
+The VPS runner now normalizes `results/` ownership back to the invoking user when run through `sudo`, so processed artifacts should not remain owned by `root` after a successful suite run.
+
+The Docker build path also defaults to BuildKit via the runner, and the service Dockerfiles use cache mounts for Cargo registry, git, and target state to reduce repeated VPS rebuild cost.
+
+For a clean CI-managed VM path, use the GitHub Actions workflow at `.github/workflows/vm-sync-and-validate.yml`. It syncs a dedicated checkout on the VM to the pushed commit SHA, runs `scripts/experiments/bootstrap_linux_vps.sh` to install missing host tooling such as `cargo`, `rustc`, and `docker buildx`, verifies the checkout SHA, and can run the validated baseline suite afterward.
+
+Expected repository configuration for the workflow:
+
+- repository variable `GCP_PROJECT_ID` or the current default project id
+- repository variable `GCP_VM_NAME` or the current default `quinn-amc-vps`
+- repository variable `GCP_VM_ZONE` or the current default `europe-west6-c`
+- optional repository variable `GCP_REPO_DIR` for the VM checkout path
+- either repository variables `GCP_WORKLOAD_IDENTITY_PROVIDER` and `GCP_SERVICE_ACCOUNT`, or secret `GCP_SERVICE_ACCOUNT_KEY`
+
 Expected VPS outputs:
 
 - `results/raw/harness/*_report.json`
