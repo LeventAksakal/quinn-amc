@@ -42,6 +42,18 @@ Keep the implementation split into four layers:
 
 This separation matters because it allows ablations and cleaner benchmarking.
 
+## AMC v1 controller boundary
+
+The current Quinn integration is intentionally narrower than the full semantic interface above.
+
+- The sender can score each outgoing media unit from `traffic class`, `deadline`, `importance`, `dependency depth`, `freshness window`, and size.
+- The congestion controller does not receive those fields directly on a per-packet or per-stream basis.
+- AMC v1 collapses sender observations into the latest connection-wide `UtilitySignal` and the controller samples only that shared snapshot when ACK and loss events arrive.
+
+That means AMC v1 is a real semantic-aware preview, but not yet a fine-grained semantic scheduler or packet-annotated controller. This is an experiment-time constraint, not a claim that the public Quinn API is already exhausted.
+
+The natural v2 expansion path is to keep `MediaSemantics` as the sender-visible contract while widening the runtime state passed into the controller, for example with sender backlog composition, class-local urgency, or richer histories. Whether that can stay inside Quinn's public controller API should be decided after the v1 results rather than assumed now.
+
 ## Initial policy expectations
 
 The first iteration should support the following behaviors:

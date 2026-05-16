@@ -2,7 +2,7 @@
 name: "Sprint QA"
 description: "Use when validating a completed sprint slice, running scoped QA, checking acceptance criteria, executing targeted tests, and reporting pass fail status back to Sprint Master. Keywords: sprint QA, scoped validation, acceptance testing, post-wave testing, worker validation, QA agent."
 tools: [read, search, execute, todo]
-model: "GPT-5 (copilot)"
+model: "GPT-5.4 (copilot)"
 agents: []
 user-invocable: false
 argument-hint: "Scoped validation package with files, acceptance criteria, and commands to run"

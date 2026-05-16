@@ -78,6 +78,14 @@ Recommended control plane split:
 - raw transfer reports are written per run under `results/raw/`
 - the harness analysis step consumes those raw reports and writes processed outputs under `results/processed/`
 
+Validated operational path in the current repository:
+
+- GCP Compute Engine Ubuntu host
+- host-side `scripts/experiments/run_linux_vps_suite.sh`
+- `sudo` execution for the runner because host-veth discovery and `tc` mutation require namespace and qdisc privileges
+- baseline-first validation through `configs/harness/vps_baseline_vod_live.json`
+- impaired preview validation through `configs/harness/vps_demo_vod_live.json`
+
 Use loopback only for smoke tests. Avoid using two different VPS instances for the main reported results because the public Internet path reduces repeatability.
 
 Each experiment cell should be repeated with fixed seeds where applicable.
@@ -110,6 +118,12 @@ Collect both transport-level and application-level metrics.
 - Any application policy that changes reliability mode or packetization must be documented clearly because it affects comparability.
 - QUIC datagrams are out of scope for the primary claim and should only be added as a secondary experiment axis if time permits.
 - Mixed-workload experiments should be separate from single-class experiments because QUIC congestion control is connection-wide.
+
+Current AMC v1 reporting limit:
+
+- reported AMC controller results correspond to a connection-wide congestion controller modulated by the latest sender utility sample
+- they do not yet demonstrate per-stream semantic isolation, packet-level semantic annotations inside Quinn, or a full sender scheduling policy redesign
+- any gain should therefore be described as evidence for the value of semantic-aware runtime signals under the present boundary, not as proof that the final AMC design space has been fully exercised
 
 ## Primary benchmark scope
 
@@ -158,6 +172,13 @@ Recommended result split:
 - `results/raw/` for per-run artifacts and machine-readable outputs
 - `results/processed/` for aggregated CSV or JSON summaries
 - `results/figures/` for plots used in the report
+
+Current validated outputs from the Linux VPS path:
+
+- raw per-run reports under `results/raw/harness/`
+- per-run AMC analysis JSON under `results/processed/harness/`
+- suite summary JSON under `results/processed/harness/*_summary.json`
+- suite comparison JSON under `results/processed/harness/*_comparison.json`
 
 ## Reporting structure
 

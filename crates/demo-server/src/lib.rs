@@ -1,6 +1,6 @@
 use std::{
     net::SocketAddr,
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -13,14 +13,17 @@ use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tracing::info;
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+const REPORT_KIND: &str = "demo_server_transfer_report";
+const REPORT_SCHEMA_VERSION: u32 = 2;
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SegmentKind {
     Init,
     Media,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReplayMode {
     Vod,
@@ -73,10 +76,23 @@ pub struct TransferReport {
 pub struct ReportMetadata {
     pub report_kind: String,
     pub schema_version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<ReportSchemaDescriptor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transfer_id: Option<String>,
     pub generated_at_unix_ms: u64,
     pub generated_by: ReportGenerator,
     pub server: ServerReportProvenance,
     pub connection: ConnectionReportProvenance,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transfer: Option<TransferReportIdentity>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ReportSchemaDescriptor {
+    pub format: String,
+    pub compatibility: String,
+    pub top_level_fields: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -91,12 +107,29 @@ pub struct ServerReportProvenance {
     pub cert_path: String,
     pub report_path: String,
     pub process_id: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_directory: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cert_path_absolute: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report_path_absolute: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ConnectionReportProvenance {
     pub remote_address: String,
     pub transfer_started_at_unix_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_address: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct TransferReportIdentity {
+    pub asset_name: String,
+    pub baseline_controller: BaselineController,
+    pub mode: ReplayMode,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -156,6 +189,7 @@ pub async fn run(args: Args) -> Result<TransferSummary> {
 
     let mut asset_name = String::from("unknown");
     let mut baseline_controller = None;
+    let mut replay_mode = None;
     let mut segments_received = 0usize;
     let mut media_segments_received = 0usize;
     let mut total_payload_bytes = 0u64;
@@ -193,6 +227,26 @@ pub async fn run(args: Args) -> Result<TransferSummary> {
             }
         } else {
             baseline_controller = Some(header.baseline_controller);
+        }
+
+        if let Some(current_mode) = replay_mode {
+            if current_mode != header.mode {
+                return Err(anyhow!(
+                    "received mixed replay modes on one connection: {:?} then {:?}",
+                    current_mode,
+                    header.mode
+                ));
+            }
+        } else {
+            replay_mode = Some(header.mode);
+        }
+
+        if segments_received > 0 && asset_name != header.asset_name {
+            return Err(anyhow!(
+                "received mixed asset names on one connection: {} then {}",
+                asset_name,
+                header.asset_name
+            ));
         }
 
         let mut payload = vec![0u8; header.payload_len as usize];
@@ -285,28 +339,23 @@ pub async fn run(args: Args) -> Result<TransferSummary> {
         min_runtime_utility_score,
         report_path: args.report_out.display().to_string(),
     };
+    let transfer_identity = match (baseline_controller, replay_mode) {
+        (Some(baseline_controller), Some(mode)) => Some(TransferReportIdentity {
+            asset_name: response.asset_name.clone(),
+            baseline_controller,
+            mode,
+        }),
+        _ => None,
+    };
     write_report(
         &args.report_out,
         &TransferReport {
-            metadata: Some(ReportMetadata {
-                report_kind: "demo_server_transfer_report".to_string(),
-                schema_version: 1,
-                generated_at_unix_ms: unix_time_ms(SystemTime::now())?,
-                generated_by: ReportGenerator {
-                    crate_name: env!("CARGO_PKG_NAME").to_string(),
-                    crate_version: env!("CARGO_PKG_VERSION").to_string(),
-                },
-                server: ServerReportProvenance {
-                    bind_address: args.bind.to_string(),
-                    cert_path: args.cert_out.display().to_string(),
-                    report_path: args.report_out.display().to_string(),
-                    process_id: std::process::id(),
-                },
-                connection: ConnectionReportProvenance {
-                    remote_address: remote.to_string(),
-                    transfer_started_at_unix_ms,
-                },
-            }),
+            metadata: Some(build_report_metadata(
+                &args,
+                remote,
+                transfer_started_at_unix_ms,
+                transfer_identity,
+            )?),
             summary: response.clone(),
             observations,
         },
@@ -376,6 +425,89 @@ async fn write_report(path: &PathBuf, report: &TransferReport) -> Result<()> {
     fs::write(path, report_bytes)
         .await
         .with_context(|| format!("failed to write transfer report to {}", path.display()))
+}
+
+fn build_report_metadata(
+    args: &Args,
+    remote: SocketAddr,
+    transfer_started_at_unix_ms: u64,
+    transfer: Option<TransferReportIdentity>,
+) -> Result<ReportMetadata> {
+    let process_id = std::process::id();
+    Ok(ReportMetadata {
+        report_kind: REPORT_KIND.to_string(),
+        schema_version: REPORT_SCHEMA_VERSION,
+        schema: Some(ReportSchemaDescriptor {
+            format: "json".to_string(),
+            compatibility: "backward_compatible_additive".to_string(),
+            top_level_fields: vec![
+                "metadata".to_string(),
+                "summary".to_string(),
+                "observations".to_string(),
+            ],
+        }),
+        transfer_id: Some(build_transfer_id(remote, transfer_started_at_unix_ms, process_id)),
+        generated_at_unix_ms: unix_time_ms(SystemTime::now())?,
+        generated_by: ReportGenerator {
+            crate_name: env!("CARGO_PKG_NAME").to_string(),
+            crate_version: env!("CARGO_PKG_VERSION").to_string(),
+        },
+        server: ServerReportProvenance {
+            bind_address: args.bind.to_string(),
+            cert_path: args.cert_out.display().to_string(),
+            report_path: args.report_out.display().to_string(),
+            process_id,
+            host_name: host_name(),
+            working_directory: working_directory(),
+            cert_path_absolute: absolute_path_string(&args.cert_out),
+            report_path_absolute: absolute_path_string(&args.report_out),
+        },
+        connection: ConnectionReportProvenance {
+            remote_address: remote.to_string(),
+            transfer_started_at_unix_ms,
+            local_address: Some(args.bind.to_string()),
+        },
+        transfer,
+    })
+}
+
+fn build_transfer_id(remote: SocketAddr, transfer_started_at_unix_ms: u64, process_id: u32) -> String {
+    format!(
+        "{}-{}-{}-{}",
+        REPORT_KIND,
+        transfer_started_at_unix_ms,
+        process_id,
+        sanitize_identifier_fragment(&remote.to_string())
+    )
+}
+
+fn sanitize_identifier_fragment(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+        .collect()
+}
+
+fn host_name() -> Option<String> {
+    ["HOSTNAME", "COMPUTERNAME"]
+        .into_iter()
+        .find_map(|key| std::env::var(key).ok())
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn working_directory() -> Option<String> {
+    std::env::current_dir()
+        .ok()
+        .map(|path| path.display().to_string())
+}
+
+fn absolute_path_string(path: &Path) -> Option<String> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir().ok()?.join(path)
+    };
+    Some(absolute.display().to_string())
 }
 
 fn unix_time_ms(time: SystemTime) -> Result<u64> {

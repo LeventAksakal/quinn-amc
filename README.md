@@ -38,6 +38,7 @@ data/
   processed/     # ffmpeg outputs such as CMAF-style fragments and replay manifests
 
 scripts/
+  experiments/   # Linux VPS runner invoked from within the GCP VM
   media/         # media download and preprocessing helpers
 
 docs/
@@ -77,6 +78,53 @@ rustup component add rustfmt clippy
 ```
 
 This repository pins Rust with `rust-toolchain.toml` for reproducible builds.
+
+## GCP control plane
+
+`gcloud` is the canonical interface for Compute Engine access in this repository.
+
+Do not rely on repo-local SSH, bootstrap, or sync wrappers. Connect to the VM with `gcloud`, then work from the checked-out workspace on the VPS itself.
+
+Typical flow:
+
+1. Confirm the target VM and zone with `gcloud compute instances list`.
+2. Connect with `gcloud compute ssh INSTANCE_NAME --zone ZONE`.
+3. On the VM, change into the checked-out workspace.
+4. Run the validated Linux runner commands from that shell.
+
+If you need to copy files explicitly, use `gcloud compute scp` rather than repo-local sync helpers.
+
+The validated remote path in this repository is a single GCP Linux VM running the host-side VPS runner under `sudo`. That is required today because host-veth discovery and `tc` application need elevated privileges.
+
+## Testing
+
+Use this sequence when validating changes locally before any VPS run:
+
+```powershell
+cargo check
+cargo test
+```
+
+Targeted validation commands that are useful during iteration:
+
+```powershell
+cargo run -p harness -- analyze-suite --config configs/harness/demo_vod_live.json
+gcloud compute instances list
+```
+
+Validated Linux VPS runs:
+
+```bash
+sudo bash scripts/experiments/run_linux_vps_suite.sh configs/harness/vps_baseline_vod_live.json
+sudo bash scripts/experiments/run_linux_vps_suite.sh configs/harness/vps_demo_vod_live.json
+```
+
+Expected VPS outputs:
+
+- `results/raw/harness/*_report.json`
+- `results/processed/harness/*_amc.json`
+- `results/processed/harness/*_summary.json`
+- `results/processed/harness/*_comparison.json`
 
 ## Quinn feature selection
 
@@ -251,10 +299,23 @@ That means the current `harness` binary has two roles:
 - `run-suite`: local in-process orchestration for development on one machine
 - `analyze-suite`: offline processing of raw reports produced by the VPS host runner
 
-For the Linux VPS flow, use the host-side runner:
+For the Linux VPS flow, connect to the VM with `gcloud compute ssh`, then use the host-side runner from the checked-out workspace:
 
 ```bash
 bash scripts/experiments/run_linux_vps_suite.sh configs/harness/vps_demo_vod_live.json
+```
+
+For the currently validated GCP VM path, invoke the runner with `sudo`:
+
+```bash
+sudo bash scripts/experiments/run_linux_vps_suite.sh configs/harness/vps_baseline_vod_live.json
+sudo bash scripts/experiments/run_linux_vps_suite.sh configs/harness/vps_demo_vod_live.json
+```
+
+For the Sprint 2 live controller matrix, run:
+
+```bash
+sudo bash scripts/experiments/run_linux_vps_suite.sh configs/harness/vps_live_realtime_controller_matrix.json
 ```
 
 The VPS config at `configs/harness/vps_demo_vod_live.json` is the starting point for that path.
@@ -267,3 +328,10 @@ Current bootstrap limitation:
 ## Build status
 
 The workspace structure is bootstrapped, the media pipeline now targets CMAF-style fragments plus replay manifests, and the demo client/server path can transfer a full processed asset over Quinn.
+
+The single-host Linux VPS path is also validated on GCP for both:
+
+- baseline-only replay through `configs/harness/vps_baseline_vod_live.json`
+- impaired host-managed `tc` replay through `configs/harness/vps_demo_vod_live.json`
+
+See `TODO.md` for the remaining cleanup and experiment-expansion work.

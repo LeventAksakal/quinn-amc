@@ -31,6 +31,14 @@
   },
   "runs": [
     {
+      "name": "live_immediate_new_reno",
+      "controller": "new_reno",
+      "mode": "live",
+      "pace": "immediate",
+      "network_scenario": "local_loopback",
+      "vod_deadline_slack_ms": 30000
+    },
+    {
       "name": "live_immediate_cubic",
       "controller": "cubic",
       "mode": "live",

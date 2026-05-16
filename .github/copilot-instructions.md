@@ -19,6 +19,42 @@
 - `demo-client` and `demo-server` own experiment traffic generation and sink behavior.
 - `harness` owns scenario definitions, run orchestration, metrics export, and result packaging.
 
+## Knowledge Tools
+
+### codebase-memo (primary — use first for all code work)
+
+- **Always call `mcp_codebase-memo_index_status` before any feature work** to confirm the index is fresh; re-index with `mcp_codebase-memo_index_repository` (mode `full`, project `c-Code-quinn-amc`) if stale.
+- Use `mcp_codebase-memo_search_code` and `mcp_codebase-memo_get_code_snippet` for context gathering before reading files or running greps — prefer the graph over raw file reads.
+- Use `mcp_codebase-memo_get_architecture` at the start of any feature or refactor to understand crate boundaries and dependencies.
+- Use `mcp_codebase-memo_trace_path` to understand call chains and data flows before changing interfaces.
+- Use `mcp_codebase-memo_detect_changes` to scope the blast radius of a proposed change before touching code.
+- Use `mcp_codebase-memo_query_graph` and `mcp_codebase-memo_search_graph` for cross-cutting queries (e.g. all callers of a function, all types implementing a trait).
+- Use `mcp_codebase-memo_manage_adr` to record and retrieve architectural decisions.
+- After landing a substantial change, call `mcp_codebase-memo_index_repository` (mode `moderate`) to keep the index current.
+
+### context7 (use for all library and API questions)
+
+- **Always resolve a library with `mcp_context7_resolve-library-id` before calling `mcp_context7_query-docs`.**
+- Use context7 for any question about Quinn, tokio, rustls, cargo, tc netem, gcloud CLI, or any other dependency — even well-known APIs. Training data is stale; prefer live docs.
+- Call context7 before proposing a new dependency, configuration option, or API usage pattern to verify current signatures, defaults, and breaking changes.
+- Do not guess at crate feature flags, version compatibility, or migration paths — fetch the docs first.
+
+### Combined workflow
+
+1. **Plan**: `get_architecture` → `search_code` → context7 docs for relevant crates.
+2. **Implement**: `trace_path` / `query_graph` to verify blast radius → edit files → `cargo check`.
+3. **Validate**: `detect_changes` to confirm scope → `cargo test` → re-index (moderate) if structure changed.
+4. **Record**: `manage_adr` for any non-obvious design choice; log book entry under `.github/logs/`.
+
+## Tooling
+
+- Agents should treat the local CLI toolchain as part of the working environment, not as an external afterthought.
+- Use `cargo` for local Rust validation and `gcloud` for Compute Engine operations. Treat `gcloud` as the canonical control plane for VPS access.
+- Use `gh` when authenticated for GitHub repository operations such as inspecting remotes, pull requests, issues, workflow runs, and repository metadata.
+- Use `gcloud` when authenticated for Google Cloud operations such as listing Compute Engine instances, SSH access, file copy, and VM bootstrap for the validated single-host VPS path.
+- Do not add or rely on repo-local SSH, bootstrap, or sync wrappers when direct `gcloud compute ssh` or `gcloud compute scp` is sufficient.
+- When a workflow depends on `gh` or `gcloud`, keep the corresponding documentation and repo instructions synchronized with the validated command path.
+
 ## Quinn usage
 
 - Start from the public Quinn API and only propose a Quinn fork if the required congestion-control hooks are not exposed through `quinn::congestion` or `TransportConfig`.
@@ -31,6 +67,7 @@
 - Optimize for repeatability and traceability.
 - Prefer trace-driven or synthetic multimedia workloads over full media stacks unless realism clearly improves the evaluation.
 - Use Linux `tc netem` as the preferred path-shaping mechanism for reproducible RTT, loss, and bandwidth control. Do not model full network topologies unless topology itself becomes part of the research question.
+- The currently validated remote experiment path is a single GCP Linux VM with host-managed `tc` applied to the demo-server container host-veth. Run the baseline suite first, then the impaired preview suite.
 - Keep one semantic traffic class per connection unless mixed-traffic behavior is the specific subject under test.
 - Every benchmark change should state which metric, scenario, or hypothesis it affects.
 - Use streams for both VOD and live traffic in the main claim. Keep QUIC datagrams out of the primary evaluation unless they are a separate experimental axis.
@@ -51,11 +88,14 @@
 ## Build and test
 
 - Prefer `cargo check`, `cargo test`, and targeted crate-level commands before larger runs.
+- Keep the documented validation path current in `README.md`; at minimum that includes local `cargo check` and the Linux VPS baseline plus shaped preview commands when those workflows change.
 - Keep dependencies minimal and explicit at the workspace level.
 - Do not introduce a Quinn fork, vendor tree, or custom patch dependency unless the project has already proven the public API is insufficient.
 
 ## Documentation
 
 - Update `README.md` when the repo shape, build flow, or benchmark entry points change.
+- Update `.github/copilot-instructions.md`, `docs/methodology.md`, and `TODO.md` when the validated experiment workflow or operational constraints change.
+- If `gh` or `gcloud` become part of the expected operator workflow, document that explicitly rather than assuming future agents will infer it.
 - Keep methodology and design notes in `docs/` and treat them as part of the research artifact.
 - Write short, concrete docs that make the experiment path obvious to a future reviewer.

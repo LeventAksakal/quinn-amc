@@ -1,7 +1,7 @@
 use std::{
     collections::HashSet,
     net::SocketAddr,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     sync::Arc,
     time::Instant,
 };
@@ -240,7 +240,7 @@ pub async fn run(args: Args) -> Result<TransferSummary> {
         0,
         0,
         0,
-        0,
+        None,
         &asset_root.join(&replay_manifest.init_segment),
         &replay_manifest.init_segment,
         &replay_manifest.semantic_defaults,
@@ -275,7 +275,7 @@ pub async fn run(args: Args) -> Result<TransferSummary> {
                 args.vod_deadline_slack_ms,
             ),
             replay_start.elapsed().as_millis() as u64,
-            segment.size_bytes,
+            Some(segment.size_bytes),
             &asset_root.join(&segment.relative_path),
             &segment.relative_path,
             &replay_manifest.semantic_defaults,
@@ -325,24 +325,14 @@ async fn send_segment(
     duration_ms: u64,
     deadline_ms: u64,
     client_send_elapsed_ms: u64,
-    expected_size_bytes: u64,
+    expected_size_bytes: Option<u64>,
     file_path: &Path,
     segment_path: &str,
     semantic_defaults: &ReplaySemanticDefaults,
     semantic_hint: Option<&ReplaySegmentSemanticHint>,
     runtime_utility: &RuntimeUtilityState,
 ) -> Result<()> {
-    let payload = fs::read(file_path)
-        .await
-        .with_context(|| format!("failed to read {}", file_path.display()))?;
-    if expected_size_bytes != 0 && payload.len() as u64 != expected_size_bytes {
-        return Err(anyhow!(
-            "payload size mismatch for {}: manifest says {}, file has {}",
-            file_path.display(),
-            expected_size_bytes,
-            payload.len()
-        ));
-    }
+    let payload = read_payload_bytes(file_path, expected_size_bytes, "segment payload").await?;
     let runtime_utility = baseline_controller.uses_runtime_utility().then(|| {
         let profile =
             derive_runtime_utility_profile(mode, kind, sequence, semantic_defaults, semantic_hint);
@@ -426,36 +416,45 @@ async fn validate_replay_input(manifest: &ReplayManifest, asset_root: &Path) -> 
         ));
     }
 
+    if let Some(default_freshness_window_ms) =
+        manifest.semantic_defaults.default_freshness_window_ms
+    {
+        if default_freshness_window_ms == 0 {
+            return Err(anyhow!(
+                "replay manifest semantic_defaults.default_freshness_window_ms must be greater than zero"
+            ));
+        }
+    }
+
+    validate_asset_relative_path(&manifest.init_segment, "init_segment")?;
+
     let init_path = asset_root.join(&manifest.init_segment);
-    let init_metadata = fs::metadata(&init_path)
-        .await
-        .with_context(|| format!("missing init segment {}", init_path.display()))?;
-    if !init_metadata.is_file() {
-        return Err(anyhow!(
-            "init segment path is not a file: {}",
-            init_path.display()
-        ));
-    }
-    if init_metadata.len() == 0 {
-        return Err(anyhow!("init segment is empty: {}", init_path.display()));
-    }
+    read_payload_bytes(&init_path, None, "init segment").await?;
 
     let mut seen_sequences = HashSet::with_capacity(manifest.segments.len());
     let mut previous_sequence = None;
     let mut previous_start_time_ms = None;
 
     for segment in &manifest.segments {
-        if segment.relative_path.trim().is_empty() {
-            return Err(anyhow!(
-                "segment {} has an empty relative_path",
-                segment.sequence
-            ));
-        }
+        validate_asset_relative_path(&segment.relative_path, "segment relative_path")
+            .with_context(|| {
+                format!("segment {} has an invalid relative_path", segment.sequence)
+            })?;
         if segment.duration_ms == 0 {
             return Err(anyhow!("segment {} has zero duration_ms", segment.sequence));
         }
         if segment.size_bytes == 0 {
             return Err(anyhow!("segment {} has zero size_bytes", segment.sequence));
+        }
+        if segment
+            .start_time_ms
+            .checked_add(segment.duration_ms)
+            .is_none()
+        {
+            return Err(anyhow!(
+                "segment {} start_time_ms + duration_ms overflows u64",
+                segment.sequence
+            ));
         }
         if !seen_sequences.insert(segment.sequence) {
             return Err(anyhow!(
@@ -492,25 +491,19 @@ async fn validate_replay_input(manifest: &ReplayManifest, asset_root: &Path) -> 
             }
         }
 
+        let profile = derive_runtime_utility_profile(
+            ReplayMode::Vod,
+            SegmentKind::Media,
+            segment.sequence,
+            &manifest.semantic_defaults,
+            segment.semantic_hint.as_ref(),
+        );
+        validate_runtime_utility_profile(segment.sequence, profile)?;
+
         let segment_path = asset_root.join(&segment.relative_path);
-        let metadata = fs::metadata(&segment_path)
+        read_payload_bytes(&segment_path, Some(segment.size_bytes), "segment payload")
             .await
-            .with_context(|| format!("missing segment payload {}", segment_path.display()))?;
-        if !metadata.is_file() {
-            return Err(anyhow!(
-                "segment path is not a file: {}",
-                segment_path.display()
-            ));
-        }
-        if metadata.len() != segment.size_bytes {
-            return Err(anyhow!(
-                "segment {} size mismatch for {}: manifest says {}, file has {}",
-                segment.sequence,
-                segment_path.display(),
-                segment.size_bytes,
-                metadata.len()
-            ));
-        }
+            .with_context(|| format!("segment {} payload preflight failed", segment.sequence))?;
 
         previous_sequence = Some(segment.sequence);
         previous_start_time_ms = Some(segment.start_time_ms);
@@ -526,8 +519,10 @@ fn compute_deadline_ms(
     vod_deadline_slack_ms: u64,
 ) -> u64 {
     match mode {
-        ReplayMode::Vod => start_time_ms + duration_ms + vod_deadline_slack_ms,
-        ReplayMode::Live => start_time_ms + duration_ms,
+        ReplayMode::Vod => start_time_ms
+            .saturating_add(duration_ms)
+            .saturating_add(vod_deadline_slack_ms),
+        ReplayMode::Live => start_time_ms.saturating_add(duration_ms),
     }
 }
 
@@ -547,9 +542,6 @@ fn update_runtime_utility(
         ReplayMode::Live => TrafficClass::Live,
     };
     let queue_delay_ms = client_send_elapsed_ms.saturating_sub(start_time_ms);
-    let dependency_ready = profile.independent
-        || profile.dependency_depth == 0
-        || queue_delay_ms <= duration_ms.saturating_mul(2);
     let estimated_rtt = connection.rtt();
     let mut semantics = MediaSemantics::new(traffic_class, profile.importance, payload_len)
         .with_dependency_depth(profile.dependency_depth);
@@ -561,6 +553,7 @@ fn update_runtime_utility(
         ReplayMode::Vod => deadline_budget_ms,
         ReplayMode::Live => duration_ms.max(1),
     });
+    let dependency_ready = derive_dependency_ready(profile, queue_delay_ms, freshness_window_ms);
     semantics = semantics.with_freshness_window(Duration::from_millis(freshness_window_ms));
 
     let signal = runtime_utility.update_from_inputs(
@@ -623,6 +616,35 @@ fn derive_runtime_utility_profile(
         independent,
         freshness_window_ms,
     }
+}
+
+fn derive_dependency_ready(
+    profile: RuntimeUtilityProfile,
+    queue_delay_ms: u64,
+    freshness_window_ms: u64,
+) -> bool {
+    profile.independent
+        || profile.dependency_depth == 0
+        || queue_delay_ms <= freshness_window_ms.max(1)
+}
+
+fn validate_runtime_utility_profile(sequence: u64, profile: RuntimeUtilityProfile) -> Result<()> {
+    if profile.independent && profile.dependency_depth > 0 {
+        return Err(anyhow!(
+            "segment {} resolves to independent=true with dependency_depth_hint={} which is inconsistent",
+            sequence,
+            profile.dependency_depth
+        ));
+    }
+
+    if !profile.independent && profile.dependency_depth == 0 {
+        return Err(anyhow!(
+            "segment {} resolves to independent=false with dependency_depth_hint=0 which is inconsistent",
+            sequence
+        ));
+    }
+
+    Ok(())
 }
 
 fn fallback_importance(mode: ReplayMode, sequence: u64, startup_segment_count: u64) -> Importance {
@@ -692,4 +714,76 @@ async fn load_root_cert_store(cert_path: &Path) -> Result<quinn::rustls::RootCer
         .context("failed to add server certificate to root store")?;
 
     Ok(roots)
+}
+
+fn validate_asset_relative_path(path: &str, field_name: &str) -> Result<()> {
+    if path.trim().is_empty() {
+        return Err(anyhow!("replay manifest {} must not be empty", field_name));
+    }
+
+    let candidate = Path::new(path);
+    if candidate.is_absolute() {
+        return Err(anyhow!("replay manifest {} must be relative", field_name));
+    }
+
+    for component in candidate.components() {
+        match component {
+            Component::Normal(_) => {}
+            Component::CurDir => {
+                return Err(anyhow!(
+                    "replay manifest {} must not contain '.' path segments",
+                    field_name
+                ));
+            }
+            Component::ParentDir => {
+                return Err(anyhow!(
+                    "replay manifest {} must not escape the asset directory",
+                    field_name
+                ));
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                return Err(anyhow!("replay manifest {} must be relative", field_name));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn read_payload_bytes(
+    file_path: &Path,
+    expected_size_bytes: Option<u64>,
+    label: &str,
+) -> Result<Vec<u8>> {
+    let metadata = fs::metadata(file_path)
+        .await
+        .with_context(|| format!("missing {} {}", label, file_path.display()))?;
+    if !metadata.is_file() {
+        return Err(anyhow!(
+            "{} path is not a file: {}",
+            label,
+            file_path.display()
+        ));
+    }
+
+    let payload = fs::read(file_path)
+        .await
+        .with_context(|| format!("failed to read {} {}", label, file_path.display()))?;
+    if payload.is_empty() {
+        return Err(anyhow!("{} is empty: {}", label, file_path.display()));
+    }
+
+    if let Some(expected_size_bytes) = expected_size_bytes {
+        if payload.len() as u64 != expected_size_bytes {
+            return Err(anyhow!(
+                "{} size mismatch for {}: manifest says {}, file has {}",
+                label,
+                file_path.display(),
+                expected_size_bytes,
+                payload.len()
+            ));
+        }
+    }
+
+    Ok(payload)
 }

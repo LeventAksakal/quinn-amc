@@ -1,4 +1,7 @@
-use std::{collections::HashSet, path::PathBuf};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+};
 
 use anyhow::{Result, bail};
 use demo_client::{BaselineController, Pace, ReplayMode};
@@ -95,6 +98,16 @@ pub fn validate_suite_config(config: &SuiteConfig) -> Result<()> {
     validate_non_empty_path(&config.replay_manifest, "replay_manifest", &mut errors);
     validate_non_empty_path(&config.results_root, "results_root", &mut errors);
 
+    if config.base_port == 0 {
+        errors.push("base_port must be greater than zero".to_string());
+    }
+    if config.server_startup_delay_ms == 0 {
+        errors.push("server_startup_delay_ms must be greater than zero".to_string());
+    }
+    if config.semantic_profile.startup_segments == 0 {
+        errors.push("semantic_profile.startup_segments must be greater than zero".to_string());
+    }
+
     if config.network_scenarios.is_empty() {
         errors.push("network_scenarios must contain at least one scenario".to_string());
     }
@@ -168,6 +181,12 @@ pub fn validate_suite_config(config: &SuiteConfig) -> Result<()> {
                 }
             }
             NetworkScenarioKind::LinuxTcNetem => {
+                if scenario.tc_netem.is_none() {
+                    errors.push(format!(
+                        "linux_tc_netem scenario '{}' must include tc_netem settings",
+                        scenario.name
+                    ));
+                }
                 if let Some(tc_netem) = &scenario.tc_netem {
                     if tc_netem.interface.trim().is_empty() {
                         errors.push(format!(
@@ -199,6 +218,8 @@ pub fn validate_suite_config(config: &SuiteConfig) -> Result<()> {
     }
 
     let mut run_names = HashSet::new();
+    let mut matrix_cells = HashMap::new();
+    let mut comparison_groups = HashMap::new();
     for run in &config.runs {
         validate_output_label(&run.name, "runs[].name", &mut errors);
         if !run_names.insert(run.name.as_str()) {
@@ -215,6 +236,50 @@ pub fn validate_suite_config(config: &SuiteConfig) -> Result<()> {
                 "run '{}' must use vod_deadline_slack_ms > 0 when provided",
                 run.name
             ));
+        }
+
+        let matrix_cell_key = format!(
+            "{}|{}|{}|{}",
+            controller_label(run.controller),
+            replay_mode_label(run.mode),
+            pace_label(run.pace),
+            run.network_scenario
+        );
+        if let Some(existing_run) = matrix_cells.insert(matrix_cell_key, run.name.as_str()) {
+            errors.push(format!(
+                "run '{}' duplicates controller matrix coverage already provided by run '{}' for controller '{}', mode '{}', pace '{}', and network scenario '{}'",
+                run.name,
+                existing_run,
+                controller_label(run.controller),
+                replay_mode_label(run.mode),
+                pace_label(run.pace),
+                run.network_scenario
+            ));
+        }
+
+        let comparison_group_key = format!(
+            "{}|{}|{}",
+            replay_mode_label(run.mode),
+            pace_label(run.pace),
+            run.network_scenario
+        );
+        match comparison_groups.entry(comparison_group_key) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert((run.name.as_str(), run.vod_deadline_slack_ms));
+            }
+            std::collections::hash_map::Entry::Occupied(entry) => {
+                let (reference_run, reference_slack_ms) = entry.get();
+                if *reference_slack_ms != run.vod_deadline_slack_ms {
+                    errors.push(format!(
+                        "run '{}' must use the same vod_deadline_slack_ms as run '{}' because they share mode '{}', pace '{}', and network scenario '{}'",
+                        run.name,
+                        reference_run,
+                        replay_mode_label(run.mode),
+                        pace_label(run.pace),
+                        run.network_scenario
+                    ));
+                }
+            }
         }
     }
 
@@ -254,5 +319,28 @@ impl SuiteConfig {
 
     fn live_freshness_window_ms(&self) -> u64 {
         self.semantic_profile.live_freshness_window_ms
+    }
+}
+
+fn controller_label(controller: BaselineController) -> &'static str {
+    match controller {
+        BaselineController::AmcPreview => "amc_preview",
+        BaselineController::Bbr => "bbr",
+        BaselineController::Cubic => "cubic",
+        BaselineController::NewReno => "new_reno",
+    }
+}
+
+fn replay_mode_label(mode: ReplayMode) -> &'static str {
+    match mode {
+        ReplayMode::Vod => "vod",
+        ReplayMode::Live => "live",
+    }
+}
+
+fn pace_label(pace: Pace) -> &'static str {
+    match pace {
+        Pace::Immediate => "immediate",
+        Pace::Realtime => "realtime",
     }
 }

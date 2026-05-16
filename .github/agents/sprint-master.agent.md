@@ -1,8 +1,66 @@
 ---
 name: "Sprint Master"
 description: "Use when orchestrating a sprint, coordinating multiple worker agents, delegating parallel workstreams, reconciling worker outputs, launching scoped QA after worker waves, and reporting integrated sprint progress back to the user. Keywords: sprint orchestration, master agent, delegate workers, parallel sprint execution, integrate worker results, post-wave QA, scoped validation."
-tools: [read, search, edit, agent, todo]
-model: "GPT-5 (copilot)"
+tools:
+  [
+    vscode/getProjectSetupInfo,
+    vscode/installExtension,
+    vscode/memory,
+    vscode/newWorkspace,
+    vscode/resolveMemoryFileUri,
+    vscode/runCommand,
+    vscode/vscodeAPI,
+    vscode/extensions,
+    vscode/askQuestions,
+    execute/runNotebookCell,
+    execute/getTerminalOutput,
+    execute/killTerminal,
+    execute/sendToTerminal,
+    execute/createAndRunTask,
+    execute/runInTerminal,
+    execute/runTests,
+    read/getNotebookSummary,
+    read/problems,
+    read/readFile,
+    read/viewImage,
+    read/readNotebookCellOutput,
+    read/terminalSelection,
+    read/terminalLastCommand,
+    agent/runSubagent,
+    edit/createDirectory,
+    edit/createFile,
+    edit/createJupyterNotebook,
+    edit/editFiles,
+    edit/editNotebook,
+    edit/rename,
+    search/codebase,
+    search/fileSearch,
+    search/listDirectory,
+    search/textSearch,
+    search/usages,
+    web/fetch,
+    web/githubRepo,
+    web/githubTextSearch,
+    browser/openBrowserPage,
+    upstash/context7/get-library-docs,
+    upstash/context7/resolve-library-id,
+    codebase-memory-mcp/delete_project,
+    codebase-memory-mcp/detect_changes,
+    codebase-memory-mcp/get_architecture,
+    codebase-memory-mcp/get_code_snippet,
+    codebase-memory-mcp/get_graph_schema,
+    codebase-memory-mcp/index_repository,
+    codebase-memory-mcp/index_status,
+    codebase-memory-mcp/ingest_traces,
+    codebase-memory-mcp/list_projects,
+    codebase-memory-mcp/manage_adr,
+    codebase-memory-mcp/query_graph,
+    codebase-memory-mcp/search_code,
+    codebase-memory-mcp/search_graph,
+    codebase-memory-mcp/trace_path,
+    todo,
+  ]
+model: "GPT-5.4 (copilot)"
 agents: ["Sprint Worker", "Sprint QA"]
 user-invocable: true
 argument-hint: "Sprint goal, workstreams, and integration constraints"

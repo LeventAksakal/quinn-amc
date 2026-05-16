@@ -2,7 +2,7 @@
 name: "Sprint Worker"
 description: "Use when implementing one focused sprint task delegated by Sprint Master, such as a single workstream slice, one file group, one validation pass, or one targeted documentation package. Keywords: sprint worker, delegated task, focused implementation, workstream execution, report back to master."
 tools: [read, search, edit, execute, todo]
-model: "GPT-5 (copilot)"
+model: "GPT-5.4 (copilot)"
 agents: []
 user-invocable: false
 argument-hint: "One focused work package with scope, files, acceptance criteria, and validation"

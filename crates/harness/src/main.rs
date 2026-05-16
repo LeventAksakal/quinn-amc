@@ -3,13 +3,14 @@ mod config;
 mod network;
 
 use std::{
+    collections::HashMap,
     net::SocketAddr,
     path::{Path, PathBuf},
 };
 
 use analysis::{
-    RunOutcome, SuiteSummary, analyze_report, build_suite_comparison_export,
-    load_replay_manifest, load_transfer_report, write_amc_analysis, write_comparison_export,
+    RunOutcome, SuiteSummary, analyze_report, build_suite_comparison_export, load_replay_manifest,
+    load_transfer_report, write_amc_analysis, write_comparison_export,
 };
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
@@ -226,11 +227,8 @@ async fn write_suite_summary(
     let summary_path = summary_output_path(workspace_root, config);
     write_summary(&summary_path, &summary).await?;
     let comparison_path = comparison_output_path(workspace_root, config);
-    let comparison_export = build_suite_comparison_export(
-        &summary.suite_name,
-        &summary.replay_manifest,
-        &summary.runs,
-    );
+    let comparison_export =
+        build_suite_comparison_export(&summary.suite_name, &summary.replay_manifest, &summary.runs);
     write_comparison_export(&comparison_path, &comparison_export).await?;
     Ok(summary_path)
 }
@@ -307,8 +305,14 @@ async fn preflight_suite(
     let replay_manifest_path = resolve_path(workspace_root, &config.replay_manifest);
     ensure_file_exists(&replay_manifest_path, "replay manifest").await?;
 
-    ensure_parent_dir(&summary_output_path(workspace_root, config)).await?;
-    ensure_parent_dir(&comparison_output_path(workspace_root, config)).await?;
+    let summary_path = summary_output_path(workspace_root, config);
+    let comparison_path = comparison_output_path(workspace_root, config);
+    let mut output_paths = HashMap::new();
+    ensure_distinct_output_path(&mut output_paths, "suite summary", &summary_path)?;
+    ensure_distinct_output_path(&mut output_paths, "suite comparison export", &comparison_path)?;
+
+    ensure_parent_dir(&summary_path).await?;
+    ensure_parent_dir(&comparison_path).await?;
 
     if matches!(command, SuiteCommand::Run) {
         ensure_parent_dir(&resolve_path(workspace_root, &config.cert_path)).await?;
@@ -318,15 +322,25 @@ async fn preflight_suite(
         let scenario = find_network_scenario(&config.network_scenarios, &run.network_scenario)
             .ok_or_else(|| anyhow!("unknown network scenario {}", run.network_scenario))?;
         let port = config.base_port + index as u16;
-        let _server_addr: SocketAddr = format!("{}:{}", config.host, port)
-            .parse()
-            .with_context(|| format!("invalid host/port {}:{}", config.host, port))?;
 
         let report_path = report_output_path(workspace_root, config, &run.name);
         let amc_analysis_path = amc_output_path(workspace_root, config, &run.name);
+        ensure_distinct_output_path(
+            &mut output_paths,
+            &format!("raw report for run {}", run.name),
+            &report_path,
+        )?;
+        ensure_distinct_output_path(
+            &mut output_paths,
+            &format!("AMC analysis for run {}", run.name),
+            &amc_analysis_path,
+        )?;
 
         match command {
             SuiteCommand::Run => {
+                let _server_addr: SocketAddr = format!("{}:{}", config.host, port)
+                    .parse()
+                    .with_context(|| format!("invalid host/port {}:{}", config.host, port))?;
                 validate_network_scenario_for_run(scenario)
                     .with_context(|| format!("network preflight failed for run {}", run.name))?;
                 ensure_parent_dir(&report_path).await?;
@@ -375,6 +389,22 @@ async fn ensure_file_exists(path: &Path, label: &str) -> Result<()> {
     }
 }
 
+fn ensure_distinct_output_path(
+    output_paths: &mut HashMap<PathBuf, String>,
+    label: &str,
+    path: &Path,
+) -> Result<()> {
+    match output_paths.insert(path.to_path_buf(), label.to_string()) {
+        Some(existing_label) => Err(anyhow!(
+            "output path collision between {} and {} at {}",
+            existing_label,
+            label,
+            path.display()
+        )),
+        None => Ok(()),
+    }
+}
+
 fn workspace_root() -> Result<PathBuf> {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     manifest_dir
@@ -403,8 +433,9 @@ async fn remove_file_if_exists(path: &Path) -> Result<()> {
     match fs::remove_file(path).await {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error)
-            .with_context(|| format!("failed to remove stale file {}", path.display())),
+        Err(error) => {
+            Err(error).with_context(|| format!("failed to remove stale file {}", path.display()))
+        }
     }
 }
 

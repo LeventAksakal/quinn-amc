@@ -79,12 +79,33 @@ pub struct RunOutcome {
 pub struct SuiteComparisonExport {
     pub suite_name: String,
     pub replay_manifest: String,
+    pub matrix_groups: Vec<ComparisonGroup>,
     pub rows: Vec<ComparisonRow>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ComparisonGroup {
+    pub comparison_cell: String,
+    pub mode: ReplayMode,
+    pub pace: demo_client::Pace,
+    pub network_scenario: String,
+    pub network_kind: NetworkScenarioKind,
+    pub tc_netem_enabled: bool,
+    pub controller_runs: Vec<ControllerRunRef>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ControllerRunRef {
+    pub controller: BaselineController,
+    pub run_name: String,
+    pub report_path: String,
+    pub amc_analysis_path: String,
 }
 
 #[derive(Debug, Serialize)]
 pub struct ComparisonRow {
     pub run_name: String,
+    pub comparison_cell: String,
     pub controller: BaselineController,
     pub mode: ReplayMode,
     pub pace: demo_client::Pace,
@@ -512,11 +533,69 @@ pub fn build_suite_comparison_export(
     replay_manifest: &str,
     runs: &[RunOutcome],
 ) -> SuiteComparisonExport {
-    let rows = runs.iter().map(ComparisonRow::from_run_outcome).collect();
+    let mut ordered_runs = runs.iter().collect::<Vec<_>>();
+    ordered_runs.sort_by(|left, right| comparison_sort_key(left).cmp(&comparison_sort_key(right)));
+
+    let mut grouped_runs: HashMap<String, Vec<&RunOutcome>> = HashMap::new();
+    for run in &ordered_runs {
+        grouped_runs
+            .entry(comparison_cell(run))
+            .or_default()
+            .push(*run);
+    }
+
+    let mut matrix_groups = grouped_runs
+        .into_values()
+        .map(ComparisonGroup::from_run_outcomes)
+        .collect::<Vec<_>>();
+    matrix_groups.sort_by(|left, right| left.comparison_cell.cmp(&right.comparison_cell));
+
+    let rows = ordered_runs
+        .into_iter()
+        .map(ComparisonRow::from_run_outcome)
+        .collect();
+
     SuiteComparisonExport {
         suite_name: suite_name.to_string(),
         replay_manifest: replay_manifest.to_string(),
+        matrix_groups,
         rows,
+    }
+}
+
+impl ComparisonGroup {
+    fn from_run_outcomes(runs: Vec<&RunOutcome>) -> Self {
+        let first_run = runs.first().expect("comparison group requires at least one run");
+        let comparison_cell = comparison_cell(first_run);
+        let mode = first_run.mode;
+        let pace = first_run.pace;
+        let network_scenario = first_run.network_scenario.name.clone();
+        let network_kind = first_run.network_scenario.kind;
+        let tc_netem_enabled = first_run.network_scenario.tc_netem_enabled;
+        let mut controller_runs = runs
+            .into_iter()
+            .map(|run| ControllerRunRef {
+                controller: run.controller,
+                run_name: run.name.clone(),
+                report_path: run.report_path.clone(),
+                amc_analysis_path: run.amc_analysis_path.clone(),
+            })
+            .collect::<Vec<_>>();
+        controller_runs.sort_by(|left, right| {
+            controller_label(left.controller)
+                .cmp(controller_label(right.controller))
+                .then_with(|| left.run_name.cmp(&right.run_name))
+        });
+
+        Self {
+            comparison_cell,
+            mode,
+            pace,
+            network_scenario,
+            network_kind,
+            tc_netem_enabled,
+            controller_runs,
+        }
     }
 }
 
@@ -528,6 +607,7 @@ impl ComparisonRow {
 
         Self {
             run_name: run.name.clone(),
+            comparison_cell: comparison_cell(run),
             controller: run.controller,
             mode: run.mode,
             pace: run.pace,
@@ -560,5 +640,55 @@ fn ratio(numerator: usize, denominator: usize) -> f64 {
         0.0
     } else {
         numerator as f64 / denominator as f64
+    }
+}
+
+fn comparison_sort_key(run: &RunOutcome) -> String {
+    format!(
+        "{}|{}|{}|{}|{}",
+        network_kind_label(run.network_scenario.kind),
+        run.network_scenario.name,
+        replay_mode_label(run.mode),
+        pace_label(run.pace),
+        controller_label(run.controller)
+    )
+}
+
+fn comparison_cell(run: &RunOutcome) -> String {
+    format!(
+        "{}|{}|{}",
+        run.network_scenario.name,
+        replay_mode_label(run.mode),
+        pace_label(run.pace)
+    )
+}
+
+fn controller_label(controller: BaselineController) -> &'static str {
+    match controller {
+        BaselineController::AmcPreview => "amc_preview",
+        BaselineController::Bbr => "bbr",
+        BaselineController::Cubic => "cubic",
+        BaselineController::NewReno => "new_reno",
+    }
+}
+
+fn replay_mode_label(mode: ReplayMode) -> &'static str {
+    match mode {
+        ReplayMode::Vod => "vod",
+        ReplayMode::Live => "live",
+    }
+}
+
+fn pace_label(pace: demo_client::Pace) -> &'static str {
+    match pace {
+        demo_client::Pace::Immediate => "immediate",
+        demo_client::Pace::Realtime => "realtime",
+    }
+}
+
+fn network_kind_label(kind: NetworkScenarioKind) -> &'static str {
+    match kind {
+        NetworkScenarioKind::Local => "local",
+        NetworkScenarioKind::LinuxTcNetem => "linux_tc_netem",
     }
 }

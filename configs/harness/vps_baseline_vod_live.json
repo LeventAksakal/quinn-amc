@@ -1,22 +1,22 @@
 {
-  "suite_name": "local_live_realtime_baselines",
-  "host": "127.0.0.1",
-  "base_port": 5200,
-  "cert_path": "demo-cert.der",
+  "suite_name": "vps_baseline_vod_live",
+  "host": "demo-server",
+  "base_port": 5001,
+  "cert_path": "results/demo-cert.der",
   "replay_manifest": "data/processed/manifests/sintel_trailer_replay.json",
-  "server_startup_delay_ms": 250,
+  "server_startup_delay_ms": 500,
   "results_root": "results",
   "network_scenarios": [
     {
-      "name": "local_loopback",
+      "name": "vps_baseline",
       "kind": "local",
-      "description": "No imposed impairment; local loopback baseline for controller comparison on one host.",
+      "description": "Single-host Linux VPS baseline on a dedicated Docker bridge without injected impairment.",
       "rtt_ms": 1,
       "loss_percent": 0.0,
       "bandwidth_mbps": 1000,
       "tc_netem_enabled": false,
       "tc_netem": null,
-      "notes": "Runnable on Windows because this scenario does not require Linux tc netem."
+      "notes": "Use this to validate the VPS container topology before enabling shaped scenarios."
     }
   ],
   "semantic_profile": {
@@ -31,27 +31,19 @@
   },
   "runs": [
     {
-      "name": "live_realtime_new_reno",
-      "controller": "new_reno",
-      "mode": "live",
+      "name": "vod_realtime",
+      "controller": "cubic",
+      "mode": "vod",
       "pace": "realtime",
-      "network_scenario": "local_loopback",
+      "network_scenario": "vps_baseline",
       "vod_deadline_slack_ms": 30000
     },
     {
-      "name": "live_realtime_cubic",
+      "name": "live_realtime",
       "controller": "cubic",
       "mode": "live",
       "pace": "realtime",
-      "network_scenario": "local_loopback",
-      "vod_deadline_slack_ms": 30000
-    },
-    {
-      "name": "live_realtime_bbr",
-      "controller": "bbr",
-      "mode": "live",
-      "pace": "realtime",
-      "network_scenario": "local_loopback",
+      "network_scenario": "vps_baseline",
       "vod_deadline_slack_ms": 30000
     }
   ]

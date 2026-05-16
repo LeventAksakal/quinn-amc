@@ -33,6 +33,53 @@ require_command ip
 [[ -f "$CONFIG_ABS" ]] || fail "config not found: $CONFIG_ABS"
 [[ -f "$COMPOSE_FILE" ]] || fail "compose file not found: $COMPOSE_FILE"
 
+can_sudo_non_interactive() {
+  sudo -n true >/dev/null 2>&1
+}
+
+ensure_directory_writable() {
+  local dir_path="$1"
+
+  mkdir -p "$dir_path" >/dev/null 2>&1 || true
+  if [[ -d "$dir_path" && -w "$dir_path" ]]; then
+    return 0
+  fi
+
+  if can_sudo_non_interactive; then
+    sudo mkdir -p "$dir_path"
+    sudo chown -R "$(id -un):$(id -gn)" "$dir_path"
+  fi
+
+  [[ -d "$dir_path" && -w "$dir_path" ]] || fail "directory is not writable: $dir_path"
+}
+
+remove_output_file() {
+  local file_path="$1"
+
+  if [[ ! -e "$file_path" ]]; then
+    return 0
+  fi
+
+  if rm -f "$file_path" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if can_sudo_non_interactive; then
+    sudo rm -f "$file_path"
+    return 0
+  fi
+
+  fail "failed to remove output file: $file_path"
+}
+
+prepare_output_paths() {
+  ensure_directory_writable "$WORKSPACE_ROOT/results"
+  ensure_directory_writable "$WORKSPACE_ROOT/results/raw"
+  ensure_directory_writable "$WORKSPACE_ROOT/results/raw/harness"
+  ensure_directory_writable "$WORKSPACE_ROOT/results/processed"
+  ensure_directory_writable "$WORKSPACE_ROOT/results/processed/harness"
+}
+
 cleanup_tc_interface() {
   local interface="${ACTIVE_TC_INTERFACE:-}"
   if [[ -n "$interface" ]]; then
@@ -115,23 +162,38 @@ wait_for_container_running() {
   done
 }
 
+get_container_ip() {
+  local container_id="$1"
+  local container_ip
+
+  container_ip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$container_id")"
+  [[ -n "$container_ip" ]] || fail "failed to resolve container IP for $container_id"
+  printf '%s\n' "$container_ip"
+}
+
 get_container_host_veth() {
   local container_id="$1"
   local pid
+  local container_interface_line
+  local container_interface
   local iflink
   local host_interface
 
   pid="$(docker inspect -f '{{.State.Pid}}' "$container_id")"
   [[ -n "$pid" && "$pid" != "0" ]] || fail "container $container_id is not running with a valid PID"
 
-  iflink="$(nsenter -t "$pid" -n cat /sys/class/net/eth0/iflink)"
-  [[ -n "$iflink" ]] || fail "failed to resolve eth0 iflink for container $container_id"
+  container_interface_line="$(nsenter -t "$pid" -n ip -o link | awk -F': ' '$2 !~ /^lo/ { print $2; exit }')"
+  [[ -n "$container_interface_line" ]] || fail "failed to resolve container interface for $container_id"
+
+  container_interface="${container_interface_line%%@*}"
+  iflink="$(sed -n 's/.*@if\([0-9]\+\).*/\1/p' <<<"$container_interface_line")"
+  [[ -n "$iflink" ]] || fail "failed to resolve host iflink from container interface $container_interface_line for $container_id"
 
   host_interface="$(ip -o link | awk -F': ' -v idx="$iflink" '$1 == idx { print $2; exit }')"
   host_interface="${host_interface%%@*}"
   [[ -n "$host_interface" ]] || fail "failed to resolve host veth for iflink $iflink from container $container_id"
 
-  log "resolved host veth: container=$container_id pid=$pid iflink=$iflink interface=$host_interface"
+  log "resolved host veth: container=$container_id pid=$pid container_interface=$container_interface iflink=$iflink interface=$host_interface" >&2
   printf '%s\n' "$host_interface"
 }
 
@@ -200,8 +262,10 @@ SERVER_CERT_HOST_PATH="$WORKSPACE_ROOT/results/demo-cert.der"
 REPLAY_MANIFEST_IN_CONTAINER="/workspace/$(jq -r '.replay_manifest' "$CONFIG_ABS")"
 HARNESS_CONFIG_IN_CONTAINER="/workspace/$CONFIG_PATH"
 
+prepare_output_paths
+
 log "building compose services: demo-server demo-client harness"
-docker compose -f "$COMPOSE_FILE" build demo-server demo-client harness
+docker compose -f "$COMPOSE_FILE" --profile demo-server --profile demo-client --profile harness build demo-server demo-client harness
 
 for run_name in $RUN_NAMES; do
   CURRENT_RUN_NAME="$run_name"
@@ -219,30 +283,33 @@ for run_name in $RUN_NAMES; do
   cleanup_tc_interface
   cleanup_demo_server
 
-  rm -f "$report_on_host"
-  rm -f "$SERVER_CERT_HOST_PATH"
+  prepare_output_paths
+  remove_output_file "$report_on_host"
+  remove_output_file "$SERVER_CERT_HOST_PATH"
   log "run setup: cleared prior report and certificate outputs for $run_name"
 
   DEMO_SERVER_REPORT_OUT="$report_in_container" \
   DEMO_SERVER_CERT_OUT="/workspace/results/demo-cert.der" \
   DEMO_SERVER_PORT=5001 \
-  docker compose -f "$COMPOSE_FILE" up -d demo-server
+  docker compose -f "$COMPOSE_FILE" --profile demo-server up -d demo-server
 
   server_container_id="$(wait_for_container_running demo-server)"
   log "demo-server running: container=$server_container_id"
   wait_for_file "$SERVER_CERT_HOST_PATH"
   log "server certificate ready: $SERVER_CERT_HOST_PATH"
+  server_container_ip="$(get_container_ip "$server_container_id")"
+  log "resolved server container IP: container=$server_container_id ip=$server_container_ip"
   server_host_veth="$(get_container_host_veth "$server_container_id")"
   apply_tc_from_scenario "$server_host_veth" "$scenario_json"
 
-  DEMO_CLIENT_SERVER="demo-server:5001" \
+  DEMO_CLIENT_SERVER="$server_container_ip:5001" \
   DEMO_CLIENT_SERVER_NAME="localhost" \
   DEMO_CLIENT_CERT="/workspace/results/demo-cert.der" \
   DEMO_CLIENT_REPLAY_MANIFEST="$REPLAY_MANIFEST_IN_CONTAINER" \
   DEMO_CLIENT_PACE="$pace" \
   DEMO_CLIENT_MODE="$mode" \
   DEMO_CLIENT_VOD_DEADLINE_SLACK_MS="$vod_deadline_slack_ms" \
-  docker compose -f "$COMPOSE_FILE" run --rm demo-client
+  docker compose -f "$COMPOSE_FILE" --profile demo-server --profile demo-client run --rm --no-deps demo-client
 
   log "client completed: run=$run_name report=$report_on_host"
 
@@ -254,7 +321,7 @@ done
 CURRENT_RUN_NAME="analyze-suite"
 
 HARNESS_CONFIG="$HARNESS_CONFIG_IN_CONTAINER" \
-docker compose -f "$COMPOSE_FILE" run --rm harness analyze-suite --config "$HARNESS_CONFIG_IN_CONTAINER"
+docker compose -f "$COMPOSE_FILE" --profile harness run --rm harness analyze-suite --config "$HARNESS_CONFIG_IN_CONTAINER"
 
 CURRENT_RUN_NAME=""
 log "suite analysis written under $WORKSPACE_ROOT/results/processed/harness"

@@ -21,6 +21,8 @@ fn scale_window_for_mtu(window: u64, old_mtu: u64, new_mtu: u64) -> u64 {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct UtilityInputs {
+    /// Sender-visible semantic inputs for one media unit before AMC v1 collapses
+    /// them into a shared runtime signal.
     pub semantics: MediaSemantics,
     pub queue_delay: Duration,
     pub estimated_rtt: Duration,
@@ -67,6 +69,12 @@ pub struct RuntimeUtilityState {
 }
 
 impl RuntimeUtilityState {
+    /// Shared bridge from sender logic into the congestion controller.
+    ///
+    /// AMC v1 stores only the latest connection-wide utility sample. The
+    /// controller does not see per-stream state, per-packet annotations, or a
+    /// history of utility changes. That boundary is deliberate for the current
+    /// experiment path and is the main extension point for AMC v2.
     pub fn new() -> Self {
         Self::default()
     }
@@ -137,6 +145,8 @@ impl Default for AmcControllerConfig {
 }
 
 impl AmcControllerConfig {
+    /// Injects the shared runtime signal that Quinn will sample from within the
+    /// connection-wide congestion controller.
     pub fn with_runtime_state(mut self, runtime_state: Arc<RuntimeUtilityState>) -> Self {
         self.runtime_state = runtime_state;
         self
@@ -169,6 +179,11 @@ pub struct AmcController {
 }
 
 impl AmcController {
+    /// Builds the AMC v1 controller.
+    ///
+    /// The control law remains connection-wide and cwnd-based. Utility affects
+    /// only ACK growth and loss backoff through the latest `RuntimeUtilityState`
+    /// snapshot rather than through packet-granular Quinn hooks.
     fn new(
         runtime_state: Arc<RuntimeUtilityState>,
         now: Instant,
@@ -414,7 +429,7 @@ mod tests {
     }
 
     #[test]
-    fn runtime_state_exposes_latest_signal() {
+    fn runtime_state_exposes_latest_connection_wide_signal() {
         let state = RuntimeUtilityState::default();
         let signal = UtilitySignal::from_score(UtilityScore(0.1));
 

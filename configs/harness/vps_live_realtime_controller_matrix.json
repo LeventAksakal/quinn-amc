@@ -1,0 +1,115 @@
+{
+  "suite_name": "vps_live_realtime_controller_matrix",
+  "host": "demo-server",
+  "base_port": 5001,
+  "cert_path": "results/demo-cert.der",
+  "replay_manifest": "data/processed/manifests/sintel_trailer_replay.json",
+  "server_startup_delay_ms": 500,
+  "results_root": "results",
+  "network_scenarios": [
+    {
+      "name": "vps_baseline",
+      "kind": "local",
+      "description": "Single-host Linux VPS baseline on a dedicated Docker bridge without injected impairment.",
+      "rtt_ms": 1,
+      "loss_percent": 0.0,
+      "bandwidth_mbps": 1000,
+      "tc_netem_enabled": false,
+      "tc_netem": null,
+      "notes": "Baseline comparison cell for the Sprint 2 live controller matrix."
+    },
+    {
+      "name": "vps_tc_preview",
+      "kind": "linux_tc_netem",
+      "description": "Host-managed Linux tc netem profile applied to the server container host-veth on the VPS.",
+      "rtt_ms": 80,
+      "loss_percent": 0.5,
+      "bandwidth_mbps": 10,
+      "tc_netem_enabled": true,
+      "tc_netem": {
+        "interface": "server-container-host-veth",
+        "delay_jitter_ms": 5,
+        "limit_packets": 128,
+        "rate_burst_kbit": 256,
+        "rate_latency_ms": 50
+      },
+      "notes": "Shaped comparison cell for the Sprint 2 live controller matrix."
+    }
+  ],
+  "semantic_profile": {
+    "startup_segments": 3,
+    "startup_importance": "critical",
+    "vod_steady_importance": "normal",
+    "live_steady_importance": "high",
+    "independent_segment_interval": 4,
+    "dependent_depth": 1,
+    "vod_freshness_window_ms": 30000,
+    "live_freshness_window_ms": 1000
+  },
+  "runs": [
+    {
+      "name": "live_realtime_new_reno_baseline",
+      "controller": "new_reno",
+      "mode": "live",
+      "pace": "realtime",
+      "network_scenario": "vps_baseline",
+      "vod_deadline_slack_ms": 30000
+    },
+    {
+      "name": "live_realtime_cubic_baseline",
+      "controller": "cubic",
+      "mode": "live",
+      "pace": "realtime",
+      "network_scenario": "vps_baseline",
+      "vod_deadline_slack_ms": 30000
+    },
+    {
+      "name": "live_realtime_bbr_baseline",
+      "controller": "bbr",
+      "mode": "live",
+      "pace": "realtime",
+      "network_scenario": "vps_baseline",
+      "vod_deadline_slack_ms": 30000
+    },
+    {
+      "name": "live_realtime_amc_preview_baseline",
+      "controller": "amc_preview",
+      "mode": "live",
+      "pace": "realtime",
+      "network_scenario": "vps_baseline",
+      "vod_deadline_slack_ms": 30000
+    },
+    {
+      "name": "live_realtime_new_reno_tc_preview",
+      "controller": "new_reno",
+      "mode": "live",
+      "pace": "realtime",
+      "network_scenario": "vps_tc_preview",
+      "vod_deadline_slack_ms": 30000
+    },
+    {
+      "name": "live_realtime_cubic_tc_preview",
+      "controller": "cubic",
+      "mode": "live",
+      "pace": "realtime",
+      "network_scenario": "vps_tc_preview",
+      "vod_deadline_slack_ms": 30000
+    },
+    {
+      "name": "live_realtime_bbr_tc_preview",
+      "controller": "bbr",
+      "mode": "live",
+      "pace": "realtime",
+      "network_scenario": "vps_tc_preview",
+      "vod_deadline_slack_ms": 30000
+    },
+    {
+      "name": "live_realtime_amc_preview_tc_preview",
+      "controller": "amc_preview",
+      "mode": "live",
+      "pace": "realtime",
+      "network_scenario": "vps_tc_preview",
+      "vod_deadline_slack_ms": 30000
+    }
+  ]
+}
