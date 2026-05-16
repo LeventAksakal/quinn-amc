@@ -10,7 +10,8 @@
 
 - Normalize VPS result ownership after `sudo` runs so `results/` artifacts stop landing as `root` on the VM.
 - Reduce the GCP VPS first-run build cost by enabling `buildx` or otherwise caching the Docker build path more aggressively.
-- Expand the shaped Linux VPS scenario matrix beyond the current preview profile to cover the main RTT, loss, and bandwidth cells in `docs/methodology.md`.
+- Replace the preview-only shaped VPS configs with a fixed preset matrix that spans `vod` and `live` across `new_reno`, `cubic`, `bbr`, and `amc_preview`.
+- Define and validate fixed network presets such as `wired_clean`, `wifi_moderate`, `wifi_unstable`, `lte_moderate`, and `lte_constrained` using explicit `tc` parameters.
 - Add fairness and coexistence runs once the AMC path is ready to compare against Cubic, NewReno, and BBR under the same VPS workflow.
 - Decide whether the host-side runner should remain server-veth-only or move to explicitly symmetric shaping for later claims.
 - Add explicit regeneration checks on real media-toolchain runs and verify regenerated manifests still work with the client and harness.
@@ -28,3 +29,5 @@
 - Add a bounded result review that separates raw observations, tentative interpretation, and concrete AMC v2 follow-up work.
 - Add a short result interpretation note once processed VPS summaries start feeding the report figures.
 - Deepen figure-ready export and reporting support beyond the current JSON-only artifact set as the comparison workflow solidifies.
+- Add a plotting pipeline that turns harness summaries and comparison exports into figure-ready PNG or SVG outputs for the report.
+- Add a `ratatui`-based live demo once the harness outputs and comparison schema are stable enough to drive a terminal presentation layer.

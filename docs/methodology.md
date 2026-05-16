@@ -49,20 +49,31 @@ Suggested workload properties:
 
 ## Network scenario matrix
 
-Use a compact, repeatable scenario matrix first. Expand only if the initial results show meaningful separation.
+The benchmark matrix is fixed and preset-driven rather than dynamically varying within a single run.
 
-Initial matrix:
+Primary comparison shape:
 
-- RTT: 20 ms, 80 ms, 150 ms
-- loss rate: 0%, 0.5%, 2%
-- bottleneck bandwidth: 10 Mbps, 50 Mbps
-- queueing regime: fixed bottleneck queue or emulator default
+- workload: `vod`, `live`
+- controller: Quinn NewReno, Quinn Cubic, Quinn BBR, AMC preview
+- network preset: named fixed `tc` profiles such as `wired_clean`, `wifi_moderate`, `wifi_unstable`, `lte_moderate`, and `lte_constrained`
+
+Each preset must map to explicit shaping parameters rather than a marketing label alone. For every preset, record:
+
+- base RTT
+- delay jitter
+- bottleneck bandwidth
+- random loss rate
+- queue limit or equivalent `tc` settings
+
+Do not vary contention dynamically inside the main comparison matrix. Keep one fixed condition per cell so controller behavior can be attributed cleanly to that workload, controller, and preset combination.
 
 Preferred implementation path:
 
 - Linux `tc netem` for delay and loss
 - `tbf` or `htb` for bandwidth limitation
 - no full topology emulation unless the research question changes
+
+Named presets should stay stable across reruns. If the project later studies adaptation to changing conditions, that should be a separate experiment family rather than part of the primary matrix.
 
 Recommended host topology for the primary experiments:
 
@@ -92,7 +103,13 @@ Each experiment cell should be repeated with fixed seeds where applicable.
 
 ## Metrics
 
-Collect both transport-level and application-level metrics.
+Collect both workload-facing and transport-facing metrics, but keep the primary story workload-specific.
+
+The current locked metric split is:
+
+- `live`: age of information, on-time delivery, stale or useless delivery ratio, latency, jitter
+- `vod`: startup delay, stall or rebuffer behavior, useful delivery ratio, throughput relative to playback demand
+- transport baseline for both: throughput, RTT summary, jitter, loss or recovery counters, completion success
 
 ### Transport-level metrics
 
@@ -106,6 +123,7 @@ Collect both transport-level and application-level metrics.
 
 - VOD rebuffer ratio or stall count
 - VOD startup delay
+- live average age of information
 - live deadline miss rate
 - live on-time delivered bytes
 - late-but-useless delivery ratio
@@ -133,6 +151,14 @@ Primary controller comparisons:
 - Quinn Cubic
 - Quinn BBR
 - AMC semantic-aware policy
+
+Primary benchmark matrix:
+
+- 2 workloads: `vod`, `live`
+- 4 controllers: `new_reno`, `cubic`, `bbr`, `amc_preview`
+- fixed named network presets backed by explicit `tc` parameters
+
+This matrix replaces any plan to vary contention dynamically within a single benchmark run.
 
 Primary benchmark questions:
 

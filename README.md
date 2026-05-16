@@ -6,8 +6,16 @@ The immediate goal is to build a reproducible research codebase that can:
 
 - express application semantics for multimedia workloads such as VOD and live delivery
 - map those semantics onto a semantic-aware transport policy with a congestion-control core
-- benchmark the custom approach against baseline controllers such as NewReno, Cubic, and BBR
+- benchmark the custom approach against Quinn's built-in baseline controllers `new_reno`, `cubic`, and `bbr`
 - generate figures and evidence suitable for a short conference-paper-style report
+
+The current benchmark spec is fixed as:
+
+- workload: `vod`, `live`
+- controller: `new_reno`, `cubic`, `bbr`, `amc_preview`
+- network preset: fixed named `tc` parameter bundles such as wired, WiFi, and LTE profiles
+
+The repository is not currently using a dynamic adaptation suite inside the main benchmark matrix. One run corresponds to one fixed network preset.
 
 ## Core idea
 
@@ -123,15 +131,29 @@ The VPS runner now normalizes `results/` ownership back to the invoking user whe
 
 The Docker build path also defaults to BuildKit via the runner, and the service Dockerfiles use cache mounts for Cargo registry, git, and target state to reduce repeated VPS rebuild cost.
 
-For a clean CI-managed VM path, use the GitHub Actions workflow at `.github/workflows/vm-sync-and-validate.yml`. It syncs a dedicated checkout on the VM to the pushed commit SHA, runs `scripts/experiments/bootstrap_linux_vps.sh` to install missing host tooling such as `cargo`, `rustc`, and `docker buildx`, verifies the checkout SHA, and can run the validated baseline suite afterward.
+The current organization policy disables service account key creation, so the validated remote update path is manual rather than GitHub Actions based. Use `gcloud compute ssh` to access the VM and update the checkout in place with `git pull` when possible, or copy a prepared repository archive with `gcloud compute scp` when the host cannot pull directly from GitHub.
 
-Expected repository configuration for the workflow:
+The clean-host bootstrap path is:
 
-- repository variable `GCP_PROJECT_ID` or the current default project id
-- repository variable `GCP_VM_NAME` or the current default `quinn-amc-vps`
-- repository variable `GCP_VM_ZONE` or the current default `europe-west6-c`
-- optional repository variable `GCP_REPO_DIR` for the VM checkout path
-- either repository variables `GCP_WORKLOAD_IDENTITY_PROVIDER` and `GCP_SERVICE_ACCOUNT`, or secret `GCP_SERVICE_ACCOUNT_KEY`
+```bash
+cd /home/leven/quinn-amc
+bash scripts/experiments/bootstrap_linux_vps.sh
+```
+
+Direct harness behavior is split intentionally:
+
+- `cargo run -p harness -- run-suite --config ...` generates raw reports and processed outputs
+- `cargo run -p harness -- analyze-suite --config ...` only analyzes already-existing raw reports, skips missing matrix cells, and fails only if no raw reports are available at all
+- `cargo run -p harness -- plot-suite --comparison ...` renders SVG figures from a comparison export into `results/figures/harness/`
+- `cargo run -p harness -- live-demo --report ...` replays a raw report in a ratatui dashboard so the controller and utility signals can be inspected live
+
+The suite run path now avoids several fixed per-cell costs:
+
+- one server endpoint and one self-signed certificate are reused across all runs in a suite
+- replay manifests and segment payload bytes are loaded once per suite and reused across controllers
+- freshly generated raw reports stay in memory for immediate AMC analysis instead of being written and reread first
+- internal segment headers use a compact binary encoding, while human-facing artifacts remain JSON
+- `run-suite` skips transport for runs whose raw report is newer than the suite config and replay manifest, so repeated iterations only rerun stale cells
 
 Expected VPS outputs:
 
@@ -139,6 +161,7 @@ Expected VPS outputs:
 - `results/processed/harness/*_amc.json`
 - `results/processed/harness/*_summary.json`
 - `results/processed/harness/*_comparison.json`
+- `results/figures/harness/*.svg` after `plot-suite`
 
 ## Quinn feature selection
 
@@ -231,6 +254,24 @@ Expected outputs:
 - one per-run AMC analysis under `results/processed/harness/*_amc.json`
 
 Each run now carries a `controller` field in harness config, and raw plus processed outputs record the selected baseline controller.
+
+The controller set is intentionally limited to Quinn's current built-ins plus AMC preview:
+
+- `new_reno` via `quinn::congestion::NewRenoConfig`
+- `cubic` via `quinn::congestion::CubicConfig`
+- `bbr` via `quinn::congestion::BbrConfig`
+- `amc_preview` as the only custom controller in this repository
+
+The comparison export now includes workload-oriented metrics such as throughput, delivery latency, jitter, deadline miss rate, and live average age of information. Partial controller matrices are preserved in the export with explicit `missing_controllers` metadata instead of aborting the entire analysis pass.
+
+For a Windows-safe local controller sweep that produces real data across all four controllers, run:
+
+```powershell
+cargo run -p harness -- run-suite --config configs/harness/local_controller_matrix.json
+cargo run -p harness -- plot-suite --comparison results/processed/harness/local_controller_matrix_comparison.json
+```
+
+For the primary benchmark path, harness suites should be organized as workload × controller × network preset matrices rather than ad hoc one-off runs.
 
 The AMC analysis now prefers semantic hints from preprocessing artifacts and only falls back to harness defaults when a manifest does not provide them.
 

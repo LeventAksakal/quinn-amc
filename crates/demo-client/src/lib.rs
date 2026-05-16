@@ -20,7 +20,7 @@ use tokio::{
 };
 use tracing::info;
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct ReplayManifest {
     asset_name: String,
     init_segment: String,
@@ -29,7 +29,7 @@ struct ReplayManifest {
     segments: Vec<ReplaySegment>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct ReplaySegment {
     sequence: u64,
     relative_path: String,
@@ -40,14 +40,14 @@ struct ReplaySegment {
     semantic_hint: Option<ReplaySegmentSemanticHint>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 struct ReplaySemanticDefaults {
     startup_segment_count: Option<u64>,
     default_dependency_depth_hint: Option<u8>,
     default_freshness_window_ms: Option<u64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct ReplaySegmentSemanticHint {
     importance_hint: Option<Importance>,
     dependency_depth_hint: Option<u8>,
@@ -55,9 +55,28 @@ struct ReplaySegmentSemanticHint {
     freshness_window_ms: Option<u64>,
 }
 
-struct ValidatedReplayInput {
-    manifest: ReplayManifest,
-    asset_root: PathBuf,
+#[derive(Clone, Debug)]
+struct PreparedInitSegment {
+    relative_path: String,
+    payload: Vec<u8>,
+}
+
+#[derive(Clone, Debug)]
+struct PreparedReplaySegment {
+    sequence: u64,
+    relative_path: String,
+    start_time_ms: u64,
+    duration_ms: u64,
+    payload: Vec<u8>,
+    semantic_hint: Option<ReplaySegmentSemanticHint>,
+}
+
+#[derive(Clone, Debug)]
+pub struct PreparedReplayInput {
+    asset_name: String,
+    semantic_defaults: ReplaySemanticDefaults,
+    init_segment: PreparedInitSegment,
+    segments: Vec<PreparedReplaySegment>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -198,10 +217,24 @@ pub struct Args {
 }
 
 pub async fn run(args: Args) -> Result<TransferSummary> {
-    let replay_input = load_validated_replay_input(&args.replay_manifest).await?;
+    let replay_input = prepare_replay_input(&args.replay_manifest).await?;
+    let cert_der = fs::read(&args.cert)
+        .await
+        .with_context(|| format!("failed to read {}", args.cert.display()))?;
+    run_prepared(args, &replay_input, &cert_der).await
+}
+
+pub async fn run_prepared(
+    args: Args,
+    replay_input: &PreparedReplayInput,
+    cert_der: &[u8],
+) -> Result<TransferSummary> {
     let runtime_utility = Arc::new(RuntimeUtilityState::default());
-    let client_config =
-        build_client_config(&args.cert, args.controller, runtime_utility.clone()).await?;
+    let client_config = build_client_config_from_cert_der(
+        cert_der,
+        args.controller,
+        runtime_utility.clone(),
+    )?;
 
     let mut endpoint = Endpoint::client(args.bind)
         .with_context(|| format!("failed to bind client endpoint on {}", args.bind))?;
@@ -218,10 +251,7 @@ pub async fn run(args: Args) -> Result<TransferSummary> {
         .await
         .context("client connection failed")?;
 
-    let replay_manifest = replay_input.manifest;
-    let asset_root = replay_input.asset_root;
-
-    info!(server = %args.server, asset = %replay_manifest.asset_name, pace = ?args.pace, mode = ?args.mode, "connected to server");
+    info!(server = %args.server, asset = %replay_input.asset_name, pace = ?args.pace, mode = ?args.mode, "connected to server");
 
     let (mut send, mut recv) = connection
         .open_bi()
@@ -231,7 +261,7 @@ pub async fn run(args: Args) -> Result<TransferSummary> {
     send_segment(
         &connection,
         &mut send,
-        &replay_manifest.asset_name,
+        &replay_input.asset_name,
         args.controller,
         args.mode,
         SegmentKind::Init,
@@ -240,17 +270,16 @@ pub async fn run(args: Args) -> Result<TransferSummary> {
         0,
         0,
         0,
-        None,
-        &asset_root.join(&replay_manifest.init_segment),
-        &replay_manifest.init_segment,
-        &replay_manifest.semantic_defaults,
+        &replay_input.init_segment.payload,
+        &replay_input.init_segment.relative_path,
+        &replay_input.semantic_defaults,
         None,
         runtime_utility.as_ref(),
     )
     .await?;
 
     let replay_start = Instant::now();
-    for segment in &replay_manifest.segments {
+    for segment in &replay_input.segments {
         if matches!(args.pace, Pace::Realtime) {
             let deadline = tokio::time::Instant::from_std(
                 replay_start + Duration::from_millis(segment.start_time_ms),
@@ -261,7 +290,7 @@ pub async fn run(args: Args) -> Result<TransferSummary> {
         send_segment(
             &connection,
             &mut send,
-            &replay_manifest.asset_name,
+            &replay_input.asset_name,
             args.controller,
             args.mode,
             SegmentKind::Media,
@@ -275,10 +304,9 @@ pub async fn run(args: Args) -> Result<TransferSummary> {
                 args.vod_deadline_slack_ms,
             ),
             replay_start.elapsed().as_millis() as u64,
-            Some(segment.size_bytes),
-            &asset_root.join(&segment.relative_path),
+            &segment.payload,
             &segment.relative_path,
-            &replay_manifest.semantic_defaults,
+            &replay_input.semantic_defaults,
             segment.semantic_hint.as_ref(),
             runtime_utility.as_ref(),
         )
@@ -325,14 +353,12 @@ async fn send_segment(
     duration_ms: u64,
     deadline_ms: u64,
     client_send_elapsed_ms: u64,
-    expected_size_bytes: Option<u64>,
-    file_path: &Path,
+    payload: &[u8],
     segment_path: &str,
     semantic_defaults: &ReplaySemanticDefaults,
     semantic_hint: Option<&ReplaySegmentSemanticHint>,
     runtime_utility: &RuntimeUtilityState,
 ) -> Result<()> {
-    let payload = read_payload_bytes(file_path, expected_size_bytes, "segment payload").await?;
     let runtime_utility = baseline_controller.uses_runtime_utility().then(|| {
         let profile =
             derive_runtime_utility_profile(mode, kind, sequence, semantic_defaults, semantic_hint);
@@ -363,7 +389,8 @@ async fn send_segment(
         segment_path: segment_path.to_string(),
         runtime_utility,
     };
-    let header_bytes = serde_json::to_vec(&header).context("failed to encode segment header")?;
+    let header_bytes = bincode::serde::encode_to_vec(&header, bincode::config::standard())
+        .context("failed to encode segment header")?;
     let header_len = u32::try_from(header_bytes.len()).context("segment header too large")?;
 
     send.write_all(&header_len.to_be_bytes())
@@ -374,7 +401,7 @@ async fn send_segment(
         .context("failed to write header")?;
     send.write_all(&payload)
         .await
-        .with_context(|| format!("failed to write payload for {}", file_path.display()))?;
+        .with_context(|| format!("failed to write payload for {}", segment_path))?;
 
     Ok(())
 }
@@ -386,7 +413,7 @@ async fn load_manifest(path: &Path) -> Result<ReplayManifest> {
     serde_json::from_slice(&manifest_bytes).context("failed to parse replay manifest JSON")
 }
 
-async fn load_validated_replay_input(path: &Path) -> Result<ValidatedReplayInput> {
+pub async fn prepare_replay_input(path: &Path) -> Result<PreparedReplayInput> {
     let manifest = load_manifest(path).await?;
     let asset_root = path
         .parent()
@@ -395,15 +422,52 @@ async fn load_validated_replay_input(path: &Path) -> Result<ValidatedReplayInput
         .join("segments")
         .join(&manifest.asset_name);
 
-    validate_replay_input(&manifest, &asset_root).await?;
+    validate_replay_input(&manifest)?;
 
-    Ok(ValidatedReplayInput {
-        manifest,
-        asset_root,
+    let init_path = asset_root.join(&manifest.init_segment);
+    let init_payload = read_payload_bytes(&init_path, None, "init segment").await?;
+
+    let mut seen_sequences = HashSet::with_capacity(manifest.segments.len());
+    let mut previous_sequence = None;
+    let mut previous_start_time_ms = None;
+    let mut prepared_segments = Vec::with_capacity(manifest.segments.len());
+
+    for segment in &manifest.segments {
+        validate_replay_segment(
+            segment,
+            &mut seen_sequences,
+            &mut previous_sequence,
+            &mut previous_start_time_ms,
+            &manifest.semantic_defaults,
+        )?;
+
+        let segment_path = asset_root.join(&segment.relative_path);
+        let payload = read_payload_bytes(&segment_path, Some(segment.size_bytes), "segment payload")
+            .await
+            .with_context(|| format!("segment {} payload preflight failed", segment.sequence))?;
+
+        prepared_segments.push(PreparedReplaySegment {
+            sequence: segment.sequence,
+            relative_path: segment.relative_path.clone(),
+            start_time_ms: segment.start_time_ms,
+            duration_ms: segment.duration_ms,
+            payload,
+            semantic_hint: segment.semantic_hint.clone(),
+        });
+    }
+
+    Ok(PreparedReplayInput {
+        asset_name: manifest.asset_name,
+        semantic_defaults: manifest.semantic_defaults,
+        init_segment: PreparedInitSegment {
+            relative_path: manifest.init_segment,
+            payload: init_payload,
+        },
+        segments: prepared_segments,
     })
 }
 
-async fn validate_replay_input(manifest: &ReplayManifest, asset_root: &Path) -> Result<()> {
+fn validate_replay_input(manifest: &ReplayManifest) -> Result<()> {
     if manifest.asset_name.trim().is_empty() {
         return Err(anyhow!("replay manifest asset_name must not be empty"));
     }
@@ -428,87 +492,80 @@ async fn validate_replay_input(manifest: &ReplayManifest, asset_root: &Path) -> 
 
     validate_asset_relative_path(&manifest.init_segment, "init_segment")?;
 
-    let init_path = asset_root.join(&manifest.init_segment);
-    read_payload_bytes(&init_path, None, "init segment").await?;
+    Ok(())
+}
 
-    let mut seen_sequences = HashSet::with_capacity(manifest.segments.len());
-    let mut previous_sequence = None;
-    let mut previous_start_time_ms = None;
-
-    for segment in &manifest.segments {
-        validate_asset_relative_path(&segment.relative_path, "segment relative_path")
-            .with_context(|| {
-                format!("segment {} has an invalid relative_path", segment.sequence)
-            })?;
-        if segment.duration_ms == 0 {
-            return Err(anyhow!("segment {} has zero duration_ms", segment.sequence));
-        }
-        if segment.size_bytes == 0 {
-            return Err(anyhow!("segment {} has zero size_bytes", segment.sequence));
-        }
-        if segment
-            .start_time_ms
-            .checked_add(segment.duration_ms)
-            .is_none()
-        {
+fn validate_replay_segment(
+    segment: &ReplaySegment,
+    seen_sequences: &mut HashSet<u64>,
+    previous_sequence: &mut Option<u64>,
+    previous_start_time_ms: &mut Option<u64>,
+    semantic_defaults: &ReplaySemanticDefaults,
+) -> Result<()> {
+    validate_asset_relative_path(&segment.relative_path, "segment relative_path")
+        .with_context(|| format!("segment {} has an invalid relative_path", segment.sequence))?;
+    if segment.duration_ms == 0 {
+        return Err(anyhow!("segment {} has zero duration_ms", segment.sequence));
+    }
+    if segment.size_bytes == 0 {
+        return Err(anyhow!("segment {} has zero size_bytes", segment.sequence));
+    }
+    if segment
+        .start_time_ms
+        .checked_add(segment.duration_ms)
+        .is_none()
+    {
+        return Err(anyhow!(
+            "segment {} start_time_ms + duration_ms overflows u64",
+            segment.sequence
+        ));
+    }
+    if !seen_sequences.insert(segment.sequence) {
+        return Err(anyhow!(
+            "duplicate segment sequence {} in replay manifest",
+            segment.sequence
+        ));
+    }
+    if let Some(previous) = *previous_sequence {
+        if segment.sequence <= previous {
             return Err(anyhow!(
-                "segment {} start_time_ms + duration_ms overflows u64",
-                segment.sequence
+                "segment sequences must be strictly increasing: {} after {}",
+                segment.sequence,
+                previous
             ));
         }
-        if !seen_sequences.insert(segment.sequence) {
+    }
+    if let Some(previous) = *previous_start_time_ms {
+        if segment.start_time_ms < previous {
             return Err(anyhow!(
-                "duplicate segment sequence {} in replay manifest",
-                segment.sequence
+                "segment start_time_ms must be nondecreasing: {} after {}",
+                segment.start_time_ms,
+                previous
             ));
         }
-        if let Some(previous) = previous_sequence {
-            if segment.sequence <= previous {
+    }
+    if let Some(semantic_hint) = segment.semantic_hint.as_ref() {
+        if let Some(freshness_window_ms) = semantic_hint.freshness_window_ms {
+            if freshness_window_ms == 0 {
                 return Err(anyhow!(
-                    "segment sequences must be strictly increasing: {} after {}",
-                    segment.sequence,
-                    previous
+                    "segment {} has zero freshness_window_ms semantic hint",
+                    segment.sequence
                 ));
             }
         }
-        if let Some(previous) = previous_start_time_ms {
-            if segment.start_time_ms < previous {
-                return Err(anyhow!(
-                    "segment start_time_ms must be nondecreasing: {} after {}",
-                    segment.start_time_ms,
-                    previous
-                ));
-            }
-        }
-        if let Some(semantic_hint) = segment.semantic_hint.as_ref() {
-            if let Some(freshness_window_ms) = semantic_hint.freshness_window_ms {
-                if freshness_window_ms == 0 {
-                    return Err(anyhow!(
-                        "segment {} has zero freshness_window_ms semantic hint",
-                        segment.sequence
-                    ));
-                }
-            }
-        }
-
-        let profile = derive_runtime_utility_profile(
-            ReplayMode::Vod,
-            SegmentKind::Media,
-            segment.sequence,
-            &manifest.semantic_defaults,
-            segment.semantic_hint.as_ref(),
-        );
-        validate_runtime_utility_profile(segment.sequence, profile)?;
-
-        let segment_path = asset_root.join(&segment.relative_path);
-        read_payload_bytes(&segment_path, Some(segment.size_bytes), "segment payload")
-            .await
-            .with_context(|| format!("segment {} payload preflight failed", segment.sequence))?;
-
-        previous_sequence = Some(segment.sequence);
-        previous_start_time_ms = Some(segment.start_time_ms);
     }
 
+    let profile = derive_runtime_utility_profile(
+        ReplayMode::Vod,
+        SegmentKind::Media,
+        segment.sequence,
+        semantic_defaults,
+        segment.semantic_hint.as_ref(),
+    );
+    validate_runtime_utility_profile(segment.sequence, profile)?;
+
+    *previous_sequence = Some(segment.sequence);
+    *previous_start_time_ms = Some(segment.start_time_ms);
     Ok(())
 }
 
@@ -669,12 +726,12 @@ fn fallback_dependency_depth(mode: ReplayMode, sequence: u64) -> u8 {
     }
 }
 
-async fn build_client_config(
-    cert_path: &PathBuf,
+fn build_client_config_from_cert_der(
+    cert_der: &[u8],
     baseline_controller: BaselineController,
     runtime_utility: Arc<RuntimeUtilityState>,
 ) -> Result<ClientConfig> {
-    let roots = load_root_cert_store(cert_path).await?;
+    let roots = load_root_cert_store_from_der(cert_der)?;
 
     let mut client_config = ClientConfig::with_root_certificates(Arc::new(roots))?;
     let mut transport_config = quinn::TransportConfig::default();
@@ -703,14 +760,10 @@ pub async fn certificate_is_ready(cert_path: &Path) -> Result<bool> {
         .is_ok())
 }
 
-async fn load_root_cert_store(cert_path: &Path) -> Result<quinn::rustls::RootCertStore> {
-    let cert_der = fs::read(cert_path)
-        .await
-        .with_context(|| format!("failed to read {}", cert_path.display()))?;
-
+fn load_root_cert_store_from_der(cert_der: &[u8]) -> Result<quinn::rustls::RootCertStore> {
     let mut roots = quinn::rustls::RootCertStore::empty();
     roots
-        .add(quinn::rustls::pki_types::CertificateDer::from(cert_der))
+        .add(quinn::rustls::pki_types::CertificateDer::from(cert_der.to_vec()))
         .context("failed to add server certificate to root store")?;
 
     Ok(roots)

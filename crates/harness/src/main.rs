@@ -1,29 +1,29 @@
 mod analysis;
 mod config;
 mod network;
+mod plot;
+mod tui_demo;
 
 use std::{
     collections::HashMap,
     net::SocketAddr,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use analysis::{
-    RunOutcome, SuiteSummary, analyze_report, build_suite_comparison_export, load_replay_manifest,
-    load_transfer_report, write_amc_analysis, write_comparison_export,
+    RunOutcome, SkippedRun, SuiteSummary, analyze_report, build_suite_comparison_export,
+    load_replay_manifest, load_transfer_report, write_amc_analysis, write_comparison_export,
 };
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use config::{SuiteConfig, find_network_scenario, validate_suite_config};
-use demo_client::{Args as ClientArgs, certificate_is_ready};
-use demo_server::{Args as ServerArgs, TransferSummary};
+use demo_client::{Args as ClientArgs, prepare_replay_input, run_prepared};
+use demo_server::{SuiteServer, TransferReport};
 use network::{apply_network_scenario, validate_network_scenario_for_run};
-use tokio::{
-    fs,
-    task::JoinHandle,
-    time::{Duration as TokioDuration, Instant as TokioInstant, sleep},
-};
-use tracing::info;
+use plot::plot_comparison_export;
+use tokio::{fs, task::JoinHandle};
+use tracing::{info, warn};
 
 #[derive(Debug, Parser)]
 struct Cli {
@@ -41,6 +41,18 @@ enum Command {
         #[arg(long, default_value = "configs/harness/demo_vod_live.json")]
         config: PathBuf,
     },
+    PlotSuite {
+        #[arg(long)]
+        comparison: PathBuf,
+        #[arg(long, default_value = "results/figures/harness")]
+        output_dir: PathBuf,
+    },
+    LiveDemo {
+        #[arg(long)]
+        report: PathBuf,
+        #[arg(long, default_value_t = 1.0)]
+        speed: f64,
+    },
 }
 
 #[tokio::main]
@@ -53,79 +65,112 @@ async fn main() -> Result<()> {
         Command::RunSuite { config } => {
             let config_path = resolve_path(&workspace_root, &config);
             let config = load_config(&config_path).await?;
-            preflight_suite(&workspace_root, &config, SuiteCommand::Run).await?;
-            let summary_path = run_local_suite(&workspace_root, &config).await?;
+            preflight_suite(&workspace_root, &config_path, &config, SuiteCommand::Run).await?;
+            let summary_path = run_local_suite(&workspace_root, &config_path, &config).await?;
             info!(summary_path = %path_relative_to(&workspace_root, &summary_path), "harness suite completed");
         }
         Command::AnalyzeSuite { config } => {
             let config_path = resolve_path(&workspace_root, &config);
             let config = load_config(&config_path).await?;
-            preflight_suite(&workspace_root, &config, SuiteCommand::Analyze).await?;
-            let summary_path = analyze_existing_suite(&workspace_root, &config).await?;
+            preflight_suite(&workspace_root, &config_path, &config, SuiteCommand::Analyze).await?;
+            let summary_path = analyze_existing_suite(&workspace_root, &config_path, &config).await?;
             info!(summary_path = %path_relative_to(&workspace_root, &summary_path), "harness analysis completed");
+        }
+        Command::PlotSuite {
+            comparison,
+            output_dir,
+        } => {
+            let comparison_path = resolve_path(&workspace_root, &comparison);
+            let output_dir = resolve_path(&workspace_root, &output_dir);
+            let outputs = plot_comparison_export(&comparison_path, &output_dir).await?;
+            for output in outputs {
+                info!(figure = %path_relative_to(&workspace_root, &output), "harness figure written");
+            }
+        }
+        Command::LiveDemo { report, speed } => {
+            let report_path = resolve_path(&workspace_root, &report);
+            let report = load_transfer_report(&report_path).await?;
+            tui_demo::run_report_replay(&report, speed)?;
         }
     }
 
     Ok(())
 }
 
-async fn run_local_suite(workspace_root: &Path, config: &SuiteConfig) -> Result<PathBuf> {
+async fn run_local_suite(
+    workspace_root: &Path,
+    config_path: &Path,
+    config: &SuiteConfig,
+) -> Result<PathBuf> {
     let replay_manifest_path = resolve_path(workspace_root, &config.replay_manifest);
     let replay_manifest = load_replay_manifest(&replay_manifest_path).await?;
+    let prepared_replay = prepare_replay_input(&replay_manifest_path).await?;
+    let cert_path = resolve_path(workspace_root, &config.cert_path);
+    let suite_server_addr: SocketAddr = format!("{}:{}", config.host, config.base_port)
+        .parse()
+        .with_context(|| format!("invalid host/port {}:{}", config.host, config.base_port))?;
+    let suite_server = Arc::new(SuiteServer::bind(suite_server_addr, cert_path.clone()).await?);
     let mut runs = Vec::with_capacity(config.runs.len());
 
-    for (index, run) in config.runs.iter().enumerate() {
+    for run in &config.runs {
         let network_scenario =
             find_network_scenario(&config.network_scenarios, &run.network_scenario)
                 .ok_or_else(|| anyhow!("unknown network scenario {}", run.network_scenario))?;
-        let port = config.base_port + index as u16;
-        let server_addr: SocketAddr = format!("{}:{}", config.host, port)
-            .parse()
-            .with_context(|| format!("invalid host/port {}:{}", config.host, port))?;
-        let cert_path = resolve_path(workspace_root, &config.cert_path);
         let absolute_report_path = report_output_path(workspace_root, config, &run.name);
         let amc_analysis_path = amc_output_path(workspace_root, config, &run.name);
-        let _network_guard = apply_network_scenario(network_scenario)?;
+        let transfer_report = if report_is_fresh(
+            &absolute_report_path,
+            &[config_path, &replay_manifest_path],
+        )
+        .await?
+        {
+            info!(run = %run.name, report = %path_relative_to(workspace_root, &absolute_report_path), "skipping transport because raw report is fresh");
+            load_transfer_report(&absolute_report_path).await?
+        } else {
+            let _network_guard = apply_network_scenario(network_scenario)?;
+            info!(run = %run.name, mode = ?run.mode, pace = ?run.pace, scenario = %network_scenario.name, server = %suite_server_addr, "starting harness run");
 
-        info!(run = %run.name, mode = ?run.mode, pace = ?run.pace, scenario = %network_scenario.name, server = %server_addr, "starting harness run");
-        remove_file_if_exists(&cert_path).await?;
-        let server_task = spawn_server(ServerArgs {
-            bind: server_addr,
-            cert_out: cert_path.clone(),
-            report_out: absolute_report_path.clone(),
-        });
+            let server = suite_server.clone();
+            let report_out = absolute_report_path.clone();
+            let server_task: JoinHandle<Result<TransferReport>> = tokio::spawn(async move {
+                server.run_transfer(&report_out).await
+            });
 
-        wait_for_server_certificate(&cert_path, config.server_startup_delay_ms).await?;
-
-        let client_summary = demo_client::run(ClientArgs {
-            bind: "0.0.0.0:0".parse().unwrap(),
-            server: server_addr,
-            server_name: "localhost".to_string(),
-            cert: cert_path,
-            replay_manifest: replay_manifest_path.clone(),
-            pace: run.pace,
-            controller: run.controller,
-            mode: run.mode,
-            vod_deadline_slack_ms: run.vod_deadline_slack_ms.unwrap_or(30_000),
-        })
-        .await
-        .with_context(|| format!("client run {} failed", run.name))?;
-
-        let server_summary = server_task
+            let client_summary = run_prepared(
+                ClientArgs {
+                    bind: "0.0.0.0:0".parse().unwrap(),
+                    server: suite_server_addr,
+                    server_name: "localhost".to_string(),
+                    cert: cert_path.clone(),
+                    replay_manifest: replay_manifest_path.clone(),
+                    pace: run.pace,
+                    controller: run.controller,
+                    mode: run.mode,
+                    vod_deadline_slack_ms: run.vod_deadline_slack_ms.unwrap_or(30_000),
+                },
+                &prepared_replay,
+                suite_server.cert_der(),
+            )
             .await
-            .context("server task join failed")?
-            .with_context(|| format!("server run {} failed", run.name))?;
+            .with_context(|| format!("client run {} failed", run.name))?;
 
-        if client_summary.report_path != server_summary.report_path {
-            return Err(anyhow!(
-                "client/server report path mismatch for {}: {} vs {}",
-                run.name,
-                client_summary.report_path,
-                server_summary.report_path
-            ));
-        }
+            let transfer_report = server_task
+                .await
+                .context("server task join failed")?
+                .with_context(|| format!("server run {} failed", run.name))?;
 
-        let transfer_report = load_transfer_report(&absolute_report_path).await?;
+            if client_summary.report_path != transfer_report.summary.report_path {
+                return Err(anyhow!(
+                    "client/server report path mismatch for {}: {} vs {}",
+                    run.name,
+                    client_summary.report_path,
+                    transfer_report.summary.report_path
+                ));
+            }
+
+            transfer_report
+        };
+
         if transfer_report.summary.baseline_controller != run.controller {
             return Err(anyhow!(
                 "controller mismatch for {}: run config {:?} vs raw report {:?}",
@@ -148,22 +193,29 @@ async fn run_local_suite(workspace_root: &Path, config: &SuiteConfig) -> Result<
             controller: run.controller,
             mode: run.mode,
             pace: run.pace,
-            server: server_addr.to_string(),
+            server: suite_server_addr.to_string(),
             report_path: path_relative_to(workspace_root, &absolute_report_path),
             network_scenario: network_scenario.clone(),
             amc_analysis_path: path_relative_to(workspace_root, &amc_analysis_path),
             amc_aggregate: amc_analysis.aggregate.clone(),
-            summary: server_summary,
+            summary: transfer_report.summary.clone(),
         });
     }
 
-    write_suite_summary(workspace_root, config, runs).await
+    suite_server.shutdown().await;
+
+    write_suite_summary(workspace_root, config, runs, Vec::new()).await
 }
 
-async fn analyze_existing_suite(workspace_root: &Path, config: &SuiteConfig) -> Result<PathBuf> {
+async fn analyze_existing_suite(
+    workspace_root: &Path,
+    config_path: &Path,
+    config: &SuiteConfig,
+) -> Result<PathBuf> {
     let replay_manifest_path = resolve_path(workspace_root, &config.replay_manifest);
     let replay_manifest = load_replay_manifest(&replay_manifest_path).await?;
     let mut runs = Vec::with_capacity(config.runs.len());
+    let mut skipped_runs = Vec::new();
 
     for (index, run) in config.runs.iter().enumerate() {
         let network_scenario =
@@ -173,9 +225,22 @@ async fn analyze_existing_suite(workspace_root: &Path, config: &SuiteConfig) -> 
         let server_addr = format!("{}:{}", config.host, port);
         let absolute_report_path = report_output_path(workspace_root, config, &run.name);
         let amc_analysis_path = amc_output_path(workspace_root, config, &run.name);
-        let transfer_report = load_transfer_report(&absolute_report_path)
-            .await
-            .with_context(|| format!("missing raw report for run {}", run.name))?;
+        let transfer_report = match load_transfer_report(&absolute_report_path).await {
+            Ok(report) => report,
+            Err(error) => {
+                warn!(run = %run.name, report = %path_relative_to(workspace_root, &absolute_report_path), error = %error, "skipping run without raw report during analyze-suite");
+                skipped_runs.push(SkippedRun {
+                    name: run.name.clone(),
+                    controller: run.controller,
+                    mode: run.mode,
+                    pace: run.pace,
+                    network_scenario: run.network_scenario.clone(),
+                    expected_report_path: path_relative_to(workspace_root, &absolute_report_path),
+                    reason: "missing raw report".to_string(),
+                });
+                continue;
+            }
+        };
         if transfer_report.summary.baseline_controller != run.controller {
             return Err(anyhow!(
                 "controller mismatch for {}: run config {:?} vs raw report {:?}",
@@ -207,13 +272,22 @@ async fn analyze_existing_suite(workspace_root: &Path, config: &SuiteConfig) -> 
         });
     }
 
-    write_suite_summary(workspace_root, config, runs).await
+    if runs.is_empty() {
+        return Err(anyhow!(
+            "analyze-suite did not find any raw reports for {}; run `cargo run -p harness -- run-suite --config {}` first",
+            config.suite_name,
+            path_relative_to(workspace_root, config_path)
+        ));
+    }
+
+    write_suite_summary(workspace_root, config, runs, skipped_runs).await
 }
 
 async fn write_suite_summary(
     workspace_root: &Path,
     config: &SuiteConfig,
     runs: Vec<RunOutcome>,
+    skipped_runs: Vec<SkippedRun>,
 ) -> Result<PathBuf> {
     let summary = SuiteSummary {
         suite_name: config.suite_name.clone(),
@@ -223,18 +297,21 @@ async fn write_suite_summary(
         ),
         network_scenarios: config.network_scenarios.clone(),
         runs,
+        skipped_runs,
     };
     let summary_path = summary_output_path(workspace_root, config);
     write_summary(&summary_path, &summary).await?;
     let comparison_path = comparison_output_path(workspace_root, config);
-    let comparison_export =
-        build_suite_comparison_export(&summary.suite_name, &summary.replay_manifest, &summary.runs);
+    let comparison_export = build_suite_comparison_export(
+        &summary.suite_name,
+        &summary.replay_manifest,
+        &summary.network_scenarios,
+        &config.runs,
+        &summary.runs,
+        &summary.skipped_runs,
+    );
     write_comparison_export(&comparison_path, &comparison_export).await?;
     Ok(summary_path)
-}
-
-fn spawn_server(args: ServerArgs) -> JoinHandle<Result<TransferSummary>> {
-    tokio::spawn(async move { demo_server::run(args).await })
 }
 
 fn report_output_path(workspace_root: &Path, config: &SuiteConfig, run_name: &str) -> PathBuf {
@@ -297,6 +374,7 @@ enum SuiteCommand {
 
 async fn preflight_suite(
     workspace_root: &Path,
+    _config_path: &Path,
     config: &SuiteConfig,
     command: SuiteCommand,
 ) -> Result<()> {
@@ -346,8 +424,7 @@ async fn preflight_suite(
                 ensure_parent_dir(&report_path).await?;
             }
             SuiteCommand::Analyze => {
-                ensure_file_exists(&report_path, &format!("raw report for run {}", run.name))
-                    .await?;
+                let _ = report_path;
             }
         }
 
@@ -429,35 +506,34 @@ fn path_relative_to(root: &Path, path: &Path) -> String {
         .replace('\\', "/")
 }
 
-async fn remove_file_if_exists(path: &Path) -> Result<()> {
-    match fs::remove_file(path).await {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+async fn report_is_fresh(report_path: &Path, dependency_paths: &[&Path]) -> Result<bool> {
+    let report_metadata = match fs::metadata(report_path).await {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(error) => {
-            Err(error).with_context(|| format!("failed to remove stale file {}", path.display()))
+            return Err(error)
+                .with_context(|| format!("failed to inspect {}", report_path.display()));
+        }
+    };
+
+    if !report_metadata.is_file() {
+        return Ok(false);
+    }
+
+    let report_modified = report_metadata
+        .modified()
+        .with_context(|| format!("failed to read mtime for {}", report_path.display()))?;
+
+    for dependency_path in dependency_paths {
+        let dependency_modified = fs::metadata(dependency_path)
+            .await
+            .with_context(|| format!("failed to inspect {}", dependency_path.display()))?
+            .modified()
+            .with_context(|| format!("failed to read mtime for {}", dependency_path.display()))?;
+        if dependency_modified > report_modified {
+            return Ok(false);
         }
     }
-}
 
-async fn wait_for_server_certificate(path: &Path, timeout_ms: u64) -> Result<()> {
-    let deadline = TokioInstant::now() + TokioDuration::from_millis(timeout_ms.max(50));
-
-    loop {
-        if certificate_file_is_ready(path).await? {
-            return Ok(());
-        }
-
-        if TokioInstant::now() >= deadline {
-            return Err(anyhow!(
-                "timed out waiting for a valid server certificate at {}",
-                path.display()
-            ));
-        }
-
-        sleep(TokioDuration::from_millis(25)).await;
-    }
-}
-
-async fn certificate_file_is_ready(path: &Path) -> Result<bool> {
-    certificate_is_ready(path).await
+    Ok(true)
 }

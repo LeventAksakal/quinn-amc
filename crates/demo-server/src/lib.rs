@@ -11,7 +11,7 @@ use quinn::{Endpoint, ServerConfig};
 use rcgen::generate_simple_self_signed;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
-use tracing::info;
+use tracing::{debug, info};
 
 const REPORT_KIND: &str = "demo_server_transfer_report";
 const REPORT_SCHEMA_VERSION: u32 = 2;
@@ -160,26 +160,77 @@ pub struct Args {
     pub report_out: PathBuf,
 }
 
+pub struct SuiteServer {
+    endpoint: Endpoint,
+    bind: SocketAddr,
+    cert_out: PathBuf,
+    cert_der: Vec<u8>,
+}
+
+impl SuiteServer {
+    pub async fn bind(bind: SocketAddr, cert_out: PathBuf) -> Result<Self> {
+        let (server_config, cert_der) = build_server_config()?;
+        let endpoint = Endpoint::server(server_config, bind)
+            .with_context(|| format!("failed to bind server endpoint on {}", bind))?;
+        write_cert(&cert_out, &cert_der).await?;
+
+        info!(bind = %bind, cert = %cert_out.display(), "server ready");
+
+        Ok(Self {
+            endpoint,
+            bind,
+            cert_out,
+            cert_der,
+        })
+    }
+
+    pub fn cert_der(&self) -> &[u8] {
+        &self.cert_der
+    }
+
+    pub async fn run_transfer(&self, report_out: &Path) -> Result<TransferReport> {
+        let incoming = self
+            .endpoint
+            .accept()
+            .await
+            .ok_or_else(|| anyhow!("endpoint closed before receiving a connection"))?;
+        let connection = incoming
+            .await
+            .context("failed to establish incoming connection")?;
+        let remote = connection.remote_address();
+
+        info!(remote = %remote, "connection established");
+
+        process_transfer(
+            &self.bind,
+            &self.cert_out,
+            report_out,
+            remote,
+            connection,
+        )
+        .await
+    }
+
+    pub async fn shutdown(&self) {
+        self.endpoint.close(0u32.into(), b"suite complete");
+        self.endpoint.wait_idle().await;
+    }
+}
+
 pub async fn run(args: Args) -> Result<TransferSummary> {
-    let (server_config, cert_der) = build_server_config()?;
+    let suite_server = SuiteServer::bind(args.bind, args.cert_out.clone()).await?;
+    let report = suite_server.run_transfer(&args.report_out).await?;
+    suite_server.shutdown().await;
+    Ok(report.summary)
+}
 
-    let endpoint = Endpoint::server(server_config, args.bind)
-        .with_context(|| format!("failed to bind server endpoint on {}", args.bind))?;
-    write_cert(&args.cert_out, &cert_der).await?;
-
-    info!(bind = %args.bind, cert = %args.cert_out.display(), "server ready");
-
-    let incoming = endpoint
-        .accept()
-        .await
-        .ok_or_else(|| anyhow!("endpoint closed before receiving a connection"))?;
-    let connection = incoming
-        .await
-        .context("failed to establish incoming connection")?;
-    let remote = connection.remote_address();
-
-    info!(remote = %remote, "connection established");
-
+async fn process_transfer(
+    bind: &SocketAddr,
+    cert_out: &Path,
+    report_out: &Path,
+    remote: SocketAddr,
+    connection: quinn::Connection,
+) -> Result<TransferReport> {
     let (mut send, mut recv) = connection
         .accept_bi()
         .await
@@ -214,8 +265,11 @@ pub async fn run(args: Args) -> Result<TransferSummary> {
         recv.read_exact(&mut header_bytes)
             .await
             .context("failed to read segment header")?;
-        let header: SegmentHeader =
-            serde_json::from_slice(&header_bytes).context("failed to decode segment header")?;
+        let (header, _): (SegmentHeader, usize) = bincode::serde::decode_from_slice(
+            &header_bytes,
+            bincode::config::standard(),
+        )
+        .context("failed to decode segment header")?;
 
         if let Some(current_controller) = baseline_controller {
             if current_controller != header.baseline_controller {
@@ -302,7 +356,7 @@ pub async fn run(args: Args) -> Result<TransferSummary> {
             runtime_utility: header.runtime_utility.clone(),
         });
 
-        info!(
+        debug!(
             remote = %remote,
             asset = %header.asset_name,
             mode = ?header.mode,
@@ -337,7 +391,7 @@ pub async fn run(args: Args) -> Result<TransferSummary> {
         amc_runtime_samples,
         max_runtime_utility_score,
         min_runtime_utility_score,
-        report_path: args.report_out.display().to_string(),
+        report_path: report_out.display().to_string(),
     };
     let transfer_identity = match (baseline_controller, replay_mode) {
         (Some(baseline_controller), Some(mode)) => Some(TransferReportIdentity {
@@ -347,20 +401,19 @@ pub async fn run(args: Args) -> Result<TransferSummary> {
         }),
         _ => None,
     };
-    write_report(
-        &args.report_out,
-        &TransferReport {
-            metadata: Some(build_report_metadata(
-                &args,
-                remote,
-                transfer_started_at_unix_ms,
-                transfer_identity,
-            )?),
-            summary: response.clone(),
-            observations,
-        },
-    )
-    .await?;
+    let report = TransferReport {
+        metadata: Some(build_report_metadata(
+            *bind,
+            cert_out,
+            report_out,
+            remote,
+            transfer_started_at_unix_ms,
+            transfer_identity,
+        )?),
+        summary: response.clone(),
+        observations,
+    };
+    write_report(report_out, &report).await?;
     let response_bytes = serde_json::to_vec(&response).context("failed to encode response")?;
     send.write_all(&response_bytes)
         .await
@@ -375,11 +428,11 @@ pub async fn run(args: Args) -> Result<TransferSummary> {
         useful_media_segments,
         late_media_segments,
         max_observed_lateness_ms,
-        report_path = %args.report_out.display(),
+        report_path = %report_out.display(),
         "transfer summary sent"
     );
-    endpoint.wait_idle().await;
-    Ok(response)
+
+    Ok(report)
 }
 
 fn build_server_config() -> Result<(ServerConfig, Vec<u8>)> {
@@ -397,7 +450,7 @@ fn build_server_config() -> Result<(ServerConfig, Vec<u8>)> {
     Ok((server_config, cert_der))
 }
 
-async fn write_cert(path: &PathBuf, cert_der: &[u8]) -> Result<()> {
+async fn write_cert(path: &Path, cert_der: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
             fs::create_dir_all(parent)
@@ -411,7 +464,7 @@ async fn write_cert(path: &PathBuf, cert_der: &[u8]) -> Result<()> {
         .with_context(|| format!("failed to write certificate to {}", path.display()))
 }
 
-async fn write_report(path: &PathBuf, report: &TransferReport) -> Result<()> {
+async fn write_report(path: &Path, report: &TransferReport) -> Result<()> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
             fs::create_dir_all(parent)
@@ -428,7 +481,9 @@ async fn write_report(path: &PathBuf, report: &TransferReport) -> Result<()> {
 }
 
 fn build_report_metadata(
-    args: &Args,
+    bind: SocketAddr,
+    cert_out: &Path,
+    report_out: &Path,
     remote: SocketAddr,
     transfer_started_at_unix_ms: u64,
     transfer: Option<TransferReportIdentity>,
@@ -453,19 +508,19 @@ fn build_report_metadata(
             crate_version: env!("CARGO_PKG_VERSION").to_string(),
         },
         server: ServerReportProvenance {
-            bind_address: args.bind.to_string(),
-            cert_path: args.cert_out.display().to_string(),
-            report_path: args.report_out.display().to_string(),
+            bind_address: bind.to_string(),
+            cert_path: cert_out.display().to_string(),
+            report_path: report_out.display().to_string(),
             process_id,
             host_name: host_name(),
             working_directory: working_directory(),
-            cert_path_absolute: absolute_path_string(&args.cert_out),
-            report_path_absolute: absolute_path_string(&args.report_out),
+            cert_path_absolute: absolute_path_string(cert_out),
+            report_path_absolute: absolute_path_string(report_out),
         },
         connection: ConnectionReportProvenance {
             remote_address: remote.to_string(),
             transfer_started_at_unix_ms,
-            local_address: Some(args.bind.to_string()),
+            local_address: Some(bind.to_string()),
         },
         transfer,
     })

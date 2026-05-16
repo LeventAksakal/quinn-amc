@@ -53,15 +53,17 @@ pub struct ReplaySemanticHint {
     pub size_tier: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct SuiteSummary {
     pub suite_name: String,
     pub replay_manifest: String,
     pub network_scenarios: Vec<NetworkScenario>,
     pub runs: Vec<RunOutcome>,
+    #[serde(default)]
+    pub skipped_runs: Vec<SkippedRun>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct RunOutcome {
     pub name: String,
     pub controller: BaselineController,
@@ -75,15 +77,28 @@ pub struct RunOutcome {
     pub summary: demo_server::TransferSummary,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SkippedRun {
+    pub name: String,
+    pub controller: BaselineController,
+    pub mode: ReplayMode,
+    pub pace: demo_client::Pace,
+    pub network_scenario: String,
+    pub expected_report_path: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 pub struct SuiteComparisonExport {
     pub suite_name: String,
     pub replay_manifest: String,
     pub matrix_groups: Vec<ComparisonGroup>,
     pub rows: Vec<ComparisonRow>,
+    #[serde(default)]
+    pub skipped_runs: Vec<SkippedRun>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ComparisonGroup {
     pub comparison_cell: String,
     pub mode: ReplayMode,
@@ -91,10 +106,14 @@ pub struct ComparisonGroup {
     pub network_scenario: String,
     pub network_kind: NetworkScenarioKind,
     pub tc_netem_enabled: bool,
+    pub expected_controllers: Vec<String>,
+    pub available_controllers: Vec<String>,
+    pub missing_controllers: Vec<String>,
+    pub complete: bool,
     pub controller_runs: Vec<ControllerRunRef>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ControllerRunRef {
     pub controller: BaselineController,
     pub run_name: String,
@@ -102,7 +121,7 @@ pub struct ControllerRunRef {
     pub amc_analysis_path: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ComparisonRow {
     pub run_name: String,
     pub comparison_cell: String,
@@ -125,6 +144,14 @@ pub struct ComparisonRow {
     pub late_media_ratio: f64,
     pub max_observed_lateness_ms: i64,
     pub total_payload_bytes: u64,
+    pub throughput_mbps: f64,
+    pub average_delivery_latency_ms: f64,
+    pub p95_delivery_latency_ms: f64,
+    pub max_delivery_latency_ms: u64,
+    pub average_jitter_ms: f64,
+    pub average_age_of_information_ms: Option<f64>,
+    pub max_age_of_information_ms: Option<u64>,
+    pub deadline_miss_rate: f64,
     pub amc_runtime_samples: usize,
     pub average_media_utility_score: f64,
     pub useful_media_utility_sum: f64,
@@ -142,7 +169,7 @@ pub struct AmcRunAnalysis {
     pub units: Vec<AmcUnitAnalysis>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct AmcAggregate {
     pub units_scored: usize,
     pub media_units_scored: usize,
@@ -153,6 +180,14 @@ pub struct AmcAggregate {
     pub useful_media_utility_sum: f64,
     pub max_media_utility_score: f64,
     pub min_media_utility_score: f64,
+    pub throughput_mbps: f64,
+    pub average_delivery_latency_ms: f64,
+    pub p95_delivery_latency_ms: f64,
+    pub max_delivery_latency_ms: u64,
+    pub average_jitter_ms: f64,
+    pub average_age_of_information_ms: Option<f64>,
+    pub max_age_of_information_ms: Option<u64>,
+    pub deadline_miss_rate: f64,
 }
 
 #[derive(Debug, Serialize)]
@@ -174,6 +209,8 @@ pub struct AmcUnitAnalysis {
     pub freshness_window_ms: Option<u64>,
     pub queue_delay_ms: u64,
     pub estimated_rtt_ms: u64,
+    pub delivery_latency_ms: u64,
+    pub age_of_information_ms: Option<u64>,
     pub utility_score: f64,
 }
 
@@ -223,6 +260,10 @@ pub fn analyze_report(
     let mut max_media_utility_score = f64::NEG_INFINITY;
     let mut min_media_utility_score = f64::INFINITY;
     let mut previous_media_useful = true;
+    let mut delivery_latencies_ms = Vec::new();
+    let mut age_of_information_ms = Vec::new();
+    let mut last_delivery_latency_ms = None;
+    let mut jitter_sum = 0u64;
     let segment_index: HashMap<u64, &ReplaySegment> = replay_manifest
         .segments
         .iter()
@@ -296,6 +337,15 @@ pub fn analyze_report(
         let segment_path = manifest_segment
             .map(|segment| segment.relative_path.clone())
             .unwrap_or_else(|| observation.segment_path.clone());
+        let delivery_latency_ms = observation
+            .server_receive_elapsed_ms
+            .saturating_sub(observation.client_send_elapsed_ms);
+        let observed_age_of_information_ms = matches!(observation.kind, SegmentKind::Media)
+            .then(|| {
+                observation
+                    .server_receive_elapsed_ms
+                    .saturating_sub(manifest_start_time_ms)
+            });
 
         let mut semantics = MediaSemantics::new(traffic_class, importance, payload_len)
             .with_dependency_depth(dependency_depth);
@@ -333,6 +383,14 @@ pub fn analyze_report(
             utility_sum += utility_score;
             max_media_utility_score = max_media_utility_score.max(utility_score);
             min_media_utility_score = min_media_utility_score.min(utility_score);
+            delivery_latencies_ms.push(delivery_latency_ms);
+            if let Some(previous_latency_ms) = last_delivery_latency_ms {
+                jitter_sum += delivery_latency_ms.abs_diff(previous_latency_ms);
+            }
+            last_delivery_latency_ms = Some(delivery_latency_ms);
+            if let Some(age_ms) = observed_age_of_information_ms {
+                age_of_information_ms.push(age_ms);
+            }
             previous_media_useful = observation.useful;
         }
 
@@ -354,9 +412,42 @@ pub fn analyze_report(
             freshness_window_ms,
             queue_delay_ms,
             estimated_rtt_ms,
+            delivery_latency_ms,
+            age_of_information_ms: observed_age_of_information_ms,
             utility_score,
         });
     }
+
+    let duration_ms = report
+        .observations
+        .iter()
+        .map(|observation| observation.server_receive_elapsed_ms)
+        .max()
+        .unwrap_or(0);
+    let throughput_mbps = if duration_ms == 0 {
+        0.0
+    } else {
+        (report.summary.total_payload_bytes as f64 * 8.0) / (duration_ms as f64 / 1_000.0) / 1_000_000.0
+    };
+    let average_delivery_latency_ms = average_u64(&delivery_latencies_ms);
+    let p95_delivery_latency_ms = percentile_u64(&delivery_latencies_ms, 0.95);
+    let max_delivery_latency_ms = delivery_latencies_ms.iter().copied().max().unwrap_or(0);
+    let average_jitter_ms = if delivery_latencies_ms.len() <= 1 {
+        0.0
+    } else {
+        jitter_sum as f64 / (delivery_latencies_ms.len() - 1) as f64
+    };
+    let average_age_of_information_ms = if matches!(run.mode, ReplayMode::Live) {
+        Some(average_u64(&age_of_information_ms))
+    } else {
+        None
+    };
+    let max_age_of_information_ms = if matches!(run.mode, ReplayMode::Live) {
+        age_of_information_ms.iter().copied().max()
+    } else {
+        None
+    };
+    let deadline_miss_rate = ratio(report.summary.late_media_segments, report.summary.media_segments_received);
 
     let aggregate = AmcAggregate {
         units_scored: units.len(),
@@ -380,6 +471,14 @@ pub fn analyze_report(
         } else {
             min_media_utility_score
         },
+        throughput_mbps,
+        average_delivery_latency_ms,
+        p95_delivery_latency_ms,
+        max_delivery_latency_ms,
+        average_jitter_ms,
+        average_age_of_information_ms,
+        max_age_of_information_ms,
+        deadline_miss_rate,
     };
 
     AmcRunAnalysis {
@@ -531,7 +630,10 @@ pub async fn write_comparison_export(path: &Path, export: &SuiteComparisonExport
 pub fn build_suite_comparison_export(
     suite_name: &str,
     replay_manifest: &str,
+    network_scenarios: &[NetworkScenario],
+    configured_runs: &[RunConfig],
     runs: &[RunOutcome],
+    skipped_runs: &[SkippedRun],
 ) -> SuiteComparisonExport {
     let mut ordered_runs = runs.iter().collect::<Vec<_>>();
     ordered_runs.sort_by(|left, right| comparison_sort_key(left).cmp(&comparison_sort_key(right)));
@@ -544,9 +646,70 @@ pub fn build_suite_comparison_export(
             .push(*run);
     }
 
-    let mut matrix_groups = grouped_runs
-        .into_values()
-        .map(ComparisonGroup::from_run_outcomes)
+    let mut expected_controllers_by_cell: HashMap<String, Vec<String>> = HashMap::new();
+    let mut scenario_meta_by_cell: HashMap<String, (ReplayMode, demo_client::Pace, String, NetworkScenarioKind, bool)> = HashMap::new();
+    for run in configured_runs {
+        let scenario = network_scenarios
+            .iter()
+            .find(|scenario| scenario.name == run.network_scenario);
+        let cell = format!(
+            "{}|{}|{}",
+            run.network_scenario,
+            replay_mode_label(run.mode),
+            pace_label(run.pace)
+        );
+        expected_controllers_by_cell
+            .entry(cell.clone())
+            .or_default()
+            .push(controller_label(run.controller).to_string());
+        scenario_meta_by_cell.entry(cell).or_insert_with(|| {
+            (
+                run.mode,
+                run.pace,
+                run.network_scenario.clone(),
+                scenario.map(|value| value.kind).unwrap_or(NetworkScenarioKind::Local),
+                scenario.map(|value| value.tc_netem_enabled).unwrap_or(false),
+            )
+        });
+    }
+    for run in runs {
+        scenario_meta_by_cell.insert(
+            comparison_cell(run),
+            (
+                run.mode,
+                run.pace,
+                run.network_scenario.name.clone(),
+                run.network_scenario.kind,
+                run.network_scenario.tc_netem_enabled,
+            ),
+        );
+    }
+
+    let mut matrix_groups = expected_controllers_by_cell
+        .into_iter()
+        .filter_map(|(comparison_cell, expected_controllers)| {
+            let (mode, pace, network_scenario, network_kind, tc_netem_enabled) =
+                scenario_meta_by_cell.get(&comparison_cell)?.clone();
+            let runs = grouped_runs.remove(&comparison_cell).unwrap_or_default();
+            let missing_controllers = expected_controllers
+                .iter()
+                .filter(|controller| {
+                    !runs.iter().any(|run| controller_label(run.controller) == controller.as_str())
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            Some(ComparisonGroup::from_parts(
+                comparison_cell,
+                mode,
+                pace,
+                network_scenario,
+                network_kind,
+                tc_netem_enabled,
+                expected_controllers,
+                missing_controllers,
+                runs,
+            ))
+        })
         .collect::<Vec<_>>();
     matrix_groups.sort_by(|left, right| left.comparison_cell.cmp(&right.comparison_cell));
 
@@ -560,18 +723,22 @@ pub fn build_suite_comparison_export(
         replay_manifest: replay_manifest.to_string(),
         matrix_groups,
         rows,
+        skipped_runs: skipped_runs.to_vec(),
     }
 }
 
 impl ComparisonGroup {
-    fn from_run_outcomes(runs: Vec<&RunOutcome>) -> Self {
-        let first_run = runs.first().expect("comparison group requires at least one run");
-        let comparison_cell = comparison_cell(first_run);
-        let mode = first_run.mode;
-        let pace = first_run.pace;
-        let network_scenario = first_run.network_scenario.name.clone();
-        let network_kind = first_run.network_scenario.kind;
-        let tc_netem_enabled = first_run.network_scenario.tc_netem_enabled;
+    fn from_parts(
+        comparison_cell: String,
+        mode: ReplayMode,
+        pace: demo_client::Pace,
+        network_scenario: String,
+        network_kind: NetworkScenarioKind,
+        tc_netem_enabled: bool,
+        mut expected_controllers: Vec<String>,
+        mut missing_controllers: Vec<String>,
+        runs: Vec<&RunOutcome>,
+    ) -> Self {
         let mut controller_runs = runs
             .into_iter()
             .map(|run| ControllerRunRef {
@@ -586,6 +753,14 @@ impl ComparisonGroup {
                 .cmp(controller_label(right.controller))
                 .then_with(|| left.run_name.cmp(&right.run_name))
         });
+        expected_controllers.sort();
+        expected_controllers.dedup();
+        missing_controllers.sort();
+        missing_controllers.dedup();
+        let available_controllers = controller_runs
+            .iter()
+            .map(|run| controller_label(run.controller).to_string())
+            .collect::<Vec<_>>();
 
         Self {
             comparison_cell,
@@ -594,6 +769,10 @@ impl ComparisonGroup {
             network_scenario,
             network_kind,
             tc_netem_enabled,
+            expected_controllers,
+            available_controllers,
+            complete: missing_controllers.is_empty(),
+            missing_controllers,
             controller_runs,
         }
     }
@@ -627,6 +806,14 @@ impl ComparisonRow {
             late_media_ratio,
             max_observed_lateness_ms: run.summary.max_observed_lateness_ms,
             total_payload_bytes: run.summary.total_payload_bytes,
+            throughput_mbps: run.amc_aggregate.throughput_mbps,
+            average_delivery_latency_ms: run.amc_aggregate.average_delivery_latency_ms,
+            p95_delivery_latency_ms: run.amc_aggregate.p95_delivery_latency_ms,
+            max_delivery_latency_ms: run.amc_aggregate.max_delivery_latency_ms,
+            average_jitter_ms: run.amc_aggregate.average_jitter_ms,
+            average_age_of_information_ms: run.amc_aggregate.average_age_of_information_ms,
+            max_age_of_information_ms: run.amc_aggregate.max_age_of_information_ms,
+            deadline_miss_rate: run.amc_aggregate.deadline_miss_rate,
             amc_runtime_samples: run.summary.amc_runtime_samples,
             average_media_utility_score: run.amc_aggregate.average_media_utility_score,
             useful_media_utility_sum: run.amc_aggregate.useful_media_utility_sum,
@@ -691,4 +878,23 @@ fn network_kind_label(kind: NetworkScenarioKind) -> &'static str {
         NetworkScenarioKind::Local => "local",
         NetworkScenarioKind::LinuxTcNetem => "linux_tc_netem",
     }
+}
+
+fn average_u64(values: &[u64]) -> f64 {
+    if values.is_empty() {
+        0.0
+    } else {
+        values.iter().sum::<u64>() as f64 / values.len() as f64
+    }
+}
+
+fn percentile_u64(values: &[u64], percentile: f64) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+
+    let mut sorted = values.to_vec();
+    sorted.sort_unstable();
+    let index = ((sorted.len() - 1) as f64 * percentile.clamp(0.0, 1.0)).round() as usize;
+    sorted[index] as f64
 }

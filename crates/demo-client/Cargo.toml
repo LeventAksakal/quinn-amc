@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 amc-core = { path = "../amc-core" }
 anyhow.workspace = true
+bincode.workspace = true
 clap.workspace = true
 quinn.workspace = true
 serde.workspace = true

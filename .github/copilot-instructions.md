@@ -53,6 +53,8 @@
 - Use `gh` when authenticated for GitHub repository operations such as inspecting remotes, pull requests, issues, workflow runs, and repository metadata.
 - Use `gcloud` when authenticated for Google Cloud operations such as listing Compute Engine instances, SSH access, file copy, and VM bootstrap for the validated single-host VPS path.
 - Do not add or rely on repo-local SSH, bootstrap, or sync wrappers when direct `gcloud compute ssh` or `gcloud compute scp` is sufficient.
+- The current organization policy disables service account key creation (`iam.disableServiceAccountKeyCreation`), so do not assume GitHub Actions service-account-key authentication is available for VM sync.
+- Prefer the manual operator path for remote updates: `gcloud compute ssh` into the VM, `git pull` in the checked-out repository when the host can reach GitHub, or `gcloud compute scp` to copy a prepared archive when direct pull is not viable.
 - When a workflow depends on `gh` or `gcloud`, keep the corresponding documentation and repo instructions synchronized with the validated command path.
 
 ## Quinn usage

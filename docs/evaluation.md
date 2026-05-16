@@ -16,6 +16,18 @@ Does a semantic-aware QUIC transport policy improve useful multimedia delivery u
 - VOD over QUIC streams
 - live over QUIC streams
 
+## Locked benchmark shape
+
+The main benchmark uses a fixed matrix:
+
+- workload: `vod`, `live`
+- controller: `new_reno`, `cubic`, `bbr`, `amc_preview`
+- network preset: fixed named `tc` profiles
+
+The network preset labels are convenience names only. Every preset must still encode explicit RTT, jitter, bandwidth, loss, and queue settings.
+
+Dynamic adaptation scenarios are not part of the primary benchmark path.
+
 ## Main outcomes
 
 ### Fairness and coexistence
@@ -26,6 +38,7 @@ Does a semantic-aware QUIC transport policy improve useful multimedia delivery u
 
 ### Multimedia resilience
 
+- average age of information for live traffic
 - stall count
 - rebuffer ratio
 - deadline miss rate
@@ -40,22 +53,24 @@ Does a semantic-aware QUIC transport policy improve useful multimedia delivery u
 
 ## Scenario plan
 
-Start with a small matrix:
+Use named fixed presets rather than raw cartesian sweeps in the primary path.
 
-- RTT: 20 ms, 80 ms, 150 ms
-- loss: 0%, 0.5%, 2%
-- bandwidth: 10 Mbps, 50 Mbps
+Initial preset family:
+
+- `wired_clean`
+- `wifi_moderate`
+- `wifi_unstable`
+- `lte_moderate`
+- `lte_constrained`
+
+Each preset should be represented in config by fixed `tc netem` and rate-limit parameters.
 
 Preferred path-control mechanism:
 
 - Linux `tc netem` for delay and loss
 - `tbf` or `htb` for bandwidth shaping when needed
 
-Then add competition cases:
-
-- AMC vs NewReno
-- AMC vs Cubic
-- AMC vs BBR
+Run the full workload × controller × preset matrix cleanly before adding fairness or coexistence cases.
 
 ## Recommended ablations
 
