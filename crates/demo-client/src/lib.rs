@@ -111,10 +111,12 @@ pub enum Pace {
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum BaselineController {
+    #[value(alias = "amc_preview")]
     AmcPreview,
     Bbr,
     #[default]
     Cubic,
+    #[value(alias = "new_reno")]
     NewReno,
 }
 

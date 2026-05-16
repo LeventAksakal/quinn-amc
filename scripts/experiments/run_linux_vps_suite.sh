@@ -304,6 +304,7 @@ docker compose -f "$COMPOSE_FILE" --profile demo-server --profile demo-client --
 for run_name in $RUN_NAMES; do
   CURRENT_RUN_NAME="$run_name"
   scenario_name="$(get_run_field "$run_name" network_scenario)"
+  controller="$(get_run_field "$run_name" controller)"
   mode="$(get_run_field "$run_name" mode)"
   pace="$(get_run_field "$run_name" pace)"
   vod_deadline_slack_ms="$(get_run_field "$run_name" vod_deadline_slack_ms)"
@@ -312,7 +313,7 @@ for run_name in $RUN_NAMES; do
   scenario_json="$(get_scenario_json "$scenario_name")"
   [[ -n "$scenario_json" ]] || fail "run $run_name references unknown scenario $scenario_name"
 
-  log "starting run: name=$run_name scenario=$scenario_name mode=$mode pace=$pace vod_deadline_slack_ms=${vod_deadline_slack_ms:-unset}"
+  log "starting run: name=$run_name scenario=$scenario_name controller=$controller mode=$mode pace=$pace vod_deadline_slack_ms=${vod_deadline_slack_ms:-unset}"
 
   cleanup_tc_interface
   cleanup_demo_server
@@ -342,6 +343,7 @@ for run_name in $RUN_NAMES; do
   DEMO_CLIENT_REPLAY_MANIFEST="$REPLAY_MANIFEST_IN_CONTAINER" \
   DEMO_CLIENT_PACE="$pace" \
   DEMO_CLIENT_MODE="$mode" \
+  DEMO_CLIENT_CONTROLLER="$controller" \
   DEMO_CLIENT_VOD_DEADLINE_SLACK_MS="$vod_deadline_slack_ms" \
   docker compose -f "$COMPOSE_FILE" --profile demo-server --profile demo-client run --rm --no-deps demo-client
 

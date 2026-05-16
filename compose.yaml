@@ -57,6 +57,8 @@ services:
         "${DEMO_CLIENT_PACE:-realtime}",
         "--mode",
         "${DEMO_CLIENT_MODE:-live}",
+        "--controller",
+        "${DEMO_CLIENT_CONTROLLER:-cubic}",
         "--vod-deadline-slack-ms",
         "${DEMO_CLIENT_VOD_DEADLINE_SLACK_MS:-30000}"
       ]
