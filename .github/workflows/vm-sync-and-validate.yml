@@ -100,10 +100,25 @@ jobs:
             --zone "$GCP_VM_ZONE" \
             --format='value(name,status)'
 
+      - name: Create VM sync archive
+        run: |
+          set -euo pipefail
+          tar \
+            --exclude='./target' \
+            --exclude='./results' \
+            --exclude='./.codebase-memory' \
+            -czf /tmp/quinn-amc-vm-sync.tgz .
+
+      - name: Copy VM sync archive to the instance
+        run: |
+          set -euo pipefail
+          gcloud compute scp /tmp/quinn-amc-vm-sync.tgz "$GCP_VM_NAME:/tmp/quinn-amc-vm-sync.tgz" \
+            --project "$GCP_PROJECT_ID" \
+            --zone "$GCP_VM_ZONE"
+
       - name: Sync clean checkout to target SHA on the VM
         env:
           TARGET_SHA: ${{ github.sha }}
-          REPO_URL: https://github.com/${{ github.repository }}.git
         run: |
           set -euo pipefail
           gcloud compute ssh "$GCP_VM_NAME" \
@@ -112,18 +127,13 @@ jobs:
             --command "bash -lc '
               set -euo pipefail
               repo_dir=\"$GCP_REPO_DIR\"
-              repo_url=\"$REPO_URL\"
               target_sha=\"$TARGET_SHA\"
 
-              if [[ ! -d \"$repo_dir/.git\" ]]; then
-                rm -rf \"$repo_dir\"
-                git clone \"$repo_url\" \"$repo_dir\"
-              fi
-
+              rm -rf \"$repo_dir\"
+              mkdir -p \"$repo_dir\"
+              tar -xzf /tmp/quinn-amc-vm-sync.tgz -C \"$repo_dir\"
               cd \"$repo_dir\"
-              git fetch --tags origin
               git checkout --force \"$target_sha\"
-              git submodule update --init --recursive
 
               actual_sha=\"$(git rev-parse HEAD)\"
               if [[ \"$actual_sha\" != \"$target_sha\" ]]; then
