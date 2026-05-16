@@ -4,6 +4,5 @@ demo-cert.der
 data/raw/
 data/processed/segments/
 data/processed/manifests/
-results/raw/
-results/processed/
+results/
 .*env
