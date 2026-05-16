@@ -16,11 +16,13 @@ require_sudo() {
 
 install_apt_packages() {
   local packages=(
+    build-essential
     ca-certificates
     curl
     git
     iproute2
     jq
+    pkg-config
     util-linux
   )
 
