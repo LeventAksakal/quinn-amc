@@ -52,12 +52,13 @@ ensure_rust_toolchain() {
     log "rust toolchain already installed"
   else
     log "installing rustup toolchain for $(id -un)"
-    curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --component clippy rustfmt
+    curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal
   fi
 
   # shellcheck disable=SC1090
   source "$HOME/.cargo/env"
   rustup show active-toolchain >/dev/null 2>&1 || rustup default stable
+  rustup component add clippy rustfmt
   cargo --version
   rustc --version
 }
