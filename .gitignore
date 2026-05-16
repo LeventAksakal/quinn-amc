@@ -6,3 +6,4 @@ data/processed/segments/
 data/processed/manifests/
 results/raw/
 results/processed/
+.*env

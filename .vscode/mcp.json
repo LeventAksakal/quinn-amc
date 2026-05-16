@@ -1,0 +1,14 @@
+{
+  "servers": {
+    "codebase-memory-mcp": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "codebase-memory-mcp@0.6.1"]
+    },
+    "context7": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp@2.2.5"]
+    }
+  }
+}
