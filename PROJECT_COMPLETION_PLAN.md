@@ -50,6 +50,16 @@ Phase 1 is resolved around the current repository boundary rather than a larger 
    - a single-run ratatui introspection demo driven by one frozen raw report
 - Out of scope for repository completion unless a later phase reopens the decision: AMC v2 state expansion, QUIC datagrams in the primary claim, dynamic adaptation suites inside the main matrix, and a comparative multi-controller demo lab
 
+## Phase 4 Resolution
+
+Phase 4 resolves the controller milestone by freezing repository completion at AMC v1.
+
+- Repository completion does not require widening `RuntimeUtilityState` beyond the latest connection-wide utility sample.
+- Controller completion means the repo can support a bounded AMC v1 claim from the frozen evidence, not that AMC must beat BBR on every matrix cell.
+- The required live-primary claim is now: AMC v1 shows bounded benefit against the loss-based baselines on the hardest constrained live presets while remaining fairness-safe against the required BBR guardrail.
+- The required supporting limitation is now: BBR remains the strongest overall baseline in the fixed matrix, and AMC v1 is not a VOD startup winner.
+- AMC v2 remains explicit future work for richer controller state, broader fairness coverage, and stronger freshness claims.
+
 ## Phase Overview
 
 ### Phase 1: Define Done And Freeze Scope

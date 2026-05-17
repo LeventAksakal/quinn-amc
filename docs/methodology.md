@@ -189,6 +189,21 @@ Current AMC v1 reporting limit:
 - any gain should therefore be described as evidence for the value of semantic-aware runtime signals under the present boundary, not as proof that the final AMC design space has been fully exercised
 - repository completion is intentionally frozen at this AMC v1 boundary; AMC v2 remains explicit future work rather than an implicit completion requirement
 
+Phase 4 controller-interpretation rule:
+
+- treat AMC v1 as complete when the frozen evidence supports a bounded live-primary claim with explicit fairness and VOD caveats
+- do not reinterpret mixed evidence as a requirement to widen `RuntimeUtilityState` or add AMC v2 state during repository completion
+- describe the current results as bounded evidence for semantic-aware runtime signals relative to the loss-based baselines, while stating directly where BBR remains stronger
+
+Current Phase 4 evidence reading:
+
+- the hardest live presets, especially `wifi_unstable` and `lte_constrained`, show AMC v1 improving over `new_reno` and `cubic` on useful utility or deadline-miss behavior
+- BBR remains the strongest overall live baseline on freshness-sensitive metrics across the fixed matrix
+- the fairness guardrail remains acceptable at the throughput-sharing level against BBR
+- VOD remains supporting evidence only, and AMC v1 should not be described as a startup-delay improvement
+
+See [docs/amc-milestone.md](docs/amc-milestone.md) for the explicit Phase 4 controller-completion criteria and compact evidence summary.
+
 ## Primary benchmark scope
 
 Primary controller comparisons:

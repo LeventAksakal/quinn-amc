@@ -54,6 +54,18 @@ That means AMC v1 is a real semantic-aware preview, but not yet a fine-grained s
 
 The natural v2 expansion path is to keep `MediaSemantics` as the sender-visible contract while widening the runtime state passed into the controller, for example with sender backlog composition, class-local urgency, or richer histories. Whether that can stay inside Quinn's public controller API should be decided after the v1 results rather than assumed now.
 
+## Phase 4 completion decision
+
+Phase 4 freezes repository completion at the AMC v1 boundary above.
+
+- `RuntimeUtilityState` remains a latest-sample bridge rather than a history-aware controller-state model
+- the sender-side live scheduler and the controller-wide utility signal together are sufficient for the repository's bounded AMC v1 claim
+- the repository does not need per-stream semantic isolation, packet-level semantic annotations, or richer controller memory to count as complete
+
+That means Phase 4 treats AMC v2 as explicit future work even if the frozen evidence is mixed. A mixed result narrows the claim; it does not reopen the controller boundary during repository completion.
+
+See [docs/amc-milestone.md](docs/amc-milestone.md) for the Phase 4 acceptance criteria and evidence interpretation that this design boundary now supports.
+
 ## Initial policy expectations
 
 The first iteration should support the following behaviors:

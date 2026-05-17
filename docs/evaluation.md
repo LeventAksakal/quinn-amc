@@ -116,3 +116,30 @@ The first benchmarkable workload path should be:
 - larger scenario sweeps or burst-loss regimes
 - AMC v2 sender-state expansion
 - legacy docker-runner coexistence parity with the host-run fairness path
+
+## Phase 4 Controller-Completion Criteria
+
+Phase 4 freezes repository completion at AMC v1 rather than reopening controller design.
+
+AMC is considered complete for this repository when:
+
+- controller identity and provenance remain auditable from config through processed outputs
+- the frozen live matrix shows bounded semantic-aware value on the harder constrained presets
+- the required BBR guardrail shows acceptable throughput fairness and Jain fairness
+- VOD is reported honestly as supporting evidence rather than as an AMC win condition
+- no AMC v2 state expansion is required to defend the repository claim
+
+This phase does not require AMC to beat BBR on every cell. It requires a bounded, evidence-backed AMC v1 claim that later phases can freeze without reopening controller scope.
+
+## Current AMC v1 Interpretation
+
+The current frozen VPS evidence supports a narrow live-primary claim:
+
+- `amc_preview` improves the hardest constrained live cells relative to `new_reno` and `cubic`, especially on deadline-miss rate and useful utility under `wifi_unstable` and `lte_constrained`
+- `bbr` remains the strongest overall baseline on live freshness-sensitive outcomes across the matrix
+- VOD throughput and aggregate utility are similar across controllers, but AMC v1 does not win on startup delay and is materially worse than BBR on `vod/lte_constrained`
+- the required fairness guardrail shows near-even throughput shares and near-perfect Jain fairness for AMC v1 against BBR, so fairness is acceptable at the throughput-sharing level even though AMC freshness still trails BBR in the same family
+
+The phase output is therefore a bounded AMC v1 claim, not a claim of broad BBR replacement.
+
+See [docs/amc-milestone.md](docs/amc-milestone.md) for the compact evidence readout and the explicitly deferred AMC v2 follow-up work.

@@ -39,6 +39,17 @@ Phase 2 freezes the repository around the workflow that actually exists today.
 - local parity remains required, but it is a validation and regression layer rather than an alternative evidence path
 - runner unification is deferred to Phase 3; Phase 2 documents the split explicitly instead of implying a workflow that does not exist
 
+## Phase 4 AMC Milestone
+
+Phase 4 freezes the controller milestone at AMC v1.
+
+- AMC v1 is a latest-sample, connection-wide runtime utility design with sender-side semantic scoring and live ready-queue reordering
+- repository completion does not require widening `RuntimeUtilityState` or adding AMC v2 state expansion
+- the bounded claim is that AMC v1 helps the hardest constrained live cells relative to `new_reno` and `cubic` while staying throughput-fair against the required BBR guardrail
+- the bounded limitation is that BBR remains the strongest overall baseline in the frozen matrix and AMC v1 is not claimed as a VOD startup winner
+
+See [docs/amc-milestone.md](docs/amc-milestone.md) for the Phase 4 controller-completion criteria and evidence reading.
+
 ## Config Status
 
 | Status | Configs | Current role |
@@ -248,6 +259,7 @@ See the project notes under `docs/`:
 
 - [docs/core-idea.md](docs/core-idea.md) for the thesis and scope boundaries
 - [docs/design.md](docs/design.md) for the application-to-transport semantic interface
+- [docs/amc-milestone.md](docs/amc-milestone.md) for the frozen AMC v1 completion boundary and evidence reading
 - [docs/evaluation.md](docs/evaluation.md) for benchmark questions and metrics
 - [docs/methodology.md](docs/methodology.md) for the consolidated experiment plan
 
