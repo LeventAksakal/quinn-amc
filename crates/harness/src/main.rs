@@ -72,8 +72,15 @@ async fn main() -> Result<()> {
         Command::AnalyzeSuite { config } => {
             let config_path = resolve_path(&workspace_root, &config);
             let config = load_config(&config_path).await?;
-            preflight_suite(&workspace_root, &config_path, &config, SuiteCommand::Analyze).await?;
-            let summary_path = analyze_existing_suite(&workspace_root, &config_path, &config).await?;
+            preflight_suite(
+                &workspace_root,
+                &config_path,
+                &config,
+                SuiteCommand::Analyze,
+            )
+            .await?;
+            let summary_path =
+                analyze_existing_suite(&workspace_root, &config_path, &config).await?;
             info!(summary_path = %path_relative_to(&workspace_root, &summary_path), "harness analysis completed");
         }
         Command::PlotSuite {
@@ -132,9 +139,8 @@ async fn run_local_suite(
 
             let server = suite_server.clone();
             let report_out = absolute_report_path.clone();
-            let server_task: JoinHandle<Result<TransferReport>> = tokio::spawn(async move {
-                server.run_transfer(&report_out).await
-            });
+            let server_task: JoinHandle<Result<TransferReport>> =
+                tokio::spawn(async move { server.run_transfer(&report_out).await });
 
             let client_summary = run_prepared(
                 ClientArgs {
@@ -387,7 +393,11 @@ async fn preflight_suite(
     let comparison_path = comparison_output_path(workspace_root, config);
     let mut output_paths = HashMap::new();
     ensure_distinct_output_path(&mut output_paths, "suite summary", &summary_path)?;
-    ensure_distinct_output_path(&mut output_paths, "suite comparison export", &comparison_path)?;
+    ensure_distinct_output_path(
+        &mut output_paths,
+        "suite comparison export",
+        &comparison_path,
+    )?;
 
     ensure_parent_dir(&summary_path).await?;
     ensure_parent_dir(&comparison_path).await?;

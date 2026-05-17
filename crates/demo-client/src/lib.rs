@@ -232,11 +232,8 @@ pub async fn run_prepared(
     cert_der: &[u8],
 ) -> Result<TransferSummary> {
     let runtime_utility = Arc::new(RuntimeUtilityState::default());
-    let client_config = build_client_config_from_cert_der(
-        cert_der,
-        args.controller,
-        runtime_utility.clone(),
-    )?;
+    let client_config =
+        build_client_config_from_cert_der(cert_der, args.controller, runtime_utility.clone())?;
 
     let mut endpoint = Endpoint::client(args.bind)
         .with_context(|| format!("failed to bind client endpoint on {}", args.bind))?;
@@ -444,9 +441,12 @@ pub async fn prepare_replay_input(path: &Path) -> Result<PreparedReplayInput> {
         )?;
 
         let segment_path = asset_root.join(&segment.relative_path);
-        let payload = read_payload_bytes(&segment_path, Some(segment.size_bytes), "segment payload")
-            .await
-            .with_context(|| format!("segment {} payload preflight failed", segment.sequence))?;
+        let payload =
+            read_payload_bytes(&segment_path, Some(segment.size_bytes), "segment payload")
+                .await
+                .with_context(|| {
+                    format!("segment {} payload preflight failed", segment.sequence)
+                })?;
 
         prepared_segments.push(PreparedReplaySegment {
             sequence: segment.sequence,
@@ -765,7 +765,9 @@ pub async fn certificate_is_ready(cert_path: &Path) -> Result<bool> {
 fn load_root_cert_store_from_der(cert_der: &[u8]) -> Result<quinn::rustls::RootCertStore> {
     let mut roots = quinn::rustls::RootCertStore::empty();
     roots
-        .add(quinn::rustls::pki_types::CertificateDer::from(cert_der.to_vec()))
+        .add(quinn::rustls::pki_types::CertificateDer::from(
+            cert_der.to_vec(),
+        ))
         .context("failed to add server certificate to root store")?;
 
     Ok(roots)

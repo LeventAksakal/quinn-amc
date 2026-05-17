@@ -161,7 +161,7 @@ Expected VPS outputs:
 - `results/processed/harness/*_amc.json`
 - `results/processed/harness/*_summary.json`
 - `results/processed/harness/*_comparison.json`
-- `results/figures/harness/*.svg` after `plot-suite`
+- `results/figures/harness/*.svg` after `plot-suite`, including matrix-aware files such as `live_realtime_throughput_mbps.svg` and `vod_realtime_useful_media_ratio.svg`
 
 ## Quinn feature selection
 
@@ -262,7 +262,7 @@ The controller set is intentionally limited to Quinn's current built-ins plus AM
 - `bbr` via `quinn::congestion::BbrConfig`
 - `amc_preview` as the only custom controller in this repository
 
-The comparison export now includes workload-oriented metrics such as throughput, delivery latency, jitter, deadline miss rate, and live average age of information. Partial controller matrices are preserved in the export with explicit `missing_controllers` metadata instead of aborting the entire analysis pass.
+The comparison export now includes workload-oriented metrics such as throughput, delivery latency, jitter, deadline miss rate, and live average age of information. Partial controller matrices are preserved in the export with explicit `missing_controllers` metadata instead of aborting the entire analysis pass. The plotter keeps overview charts and also emits scenario-grouped controller comparison figures per mode and pace so fixed-preset suites produce figure-ready outputs directly.
 
 For a Windows-safe local controller sweep that produces real data across all four controllers, run:
 
