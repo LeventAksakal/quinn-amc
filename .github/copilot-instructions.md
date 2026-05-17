@@ -69,7 +69,9 @@
 - Optimize for repeatability and traceability.
 - Prefer trace-driven or synthetic multimedia workloads over full media stacks unless realism clearly improves the evaluation.
 - Use Linux `tc netem` as the preferred path-shaping mechanism for reproducible RTT, loss, and bandwidth control. Do not model full network topologies unless topology itself becomes part of the research question.
-- The currently validated remote experiment path is a single GCP Linux VM with host-managed `tc` applied to the demo-server container host-veth. Run the baseline suite first, then the impaired preview suite.
+- The current canonical VPS evidence model is split on one GCP Linux VM: `configs/harness/vps_fixed_preset_controller_matrix.json` runs through `scripts/experiments/run_linux_vps_suite.sh` with host-managed `tc` on the demo-server container host-veth, while `configs/harness/vps_host_live_coexistence_bbr_guardrail.json` runs through direct host `harness run-suite` with `tc` on `lo` because the docker runner is still single-flow only.
+- Treat `configs/harness/vps_baseline_vod_live.json` and `configs/harness/vps_demo_vod_live.json` as workflow-validation suites, not final evidence.
+- Treat `configs/harness/vps_live_coexistence_bbr_guardrail.json` as non-canonical until the VPS docker runner can emit coexistence raw reports.
 - Keep one semantic traffic class per connection unless mixed-traffic behavior is the specific subject under test.
 - Every benchmark change should state which metric, scenario, or hypothesis it affects.
 - Use streams for both VOD and live traffic in the main claim. Keep QUIC datagrams out of the primary evaluation unless they are a separate experimental axis.

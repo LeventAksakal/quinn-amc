@@ -13,6 +13,15 @@ This handoff covers the AMC traffic-class update, harness coexistence support, a
 - The fixed preset VPS matrix completed successfully with `configs/harness/vps_fixed_preset_controller_matrix.json`.
 - The coexistence fairness suite completed successfully only through the host-run harness path with `configs/harness/vps_host_live_coexistence_bbr_guardrail.json`.
 
+## Current Canonical Workflow Status
+
+Phase 2 freezes the repository around the workflow that was actually validated here.
+
+- `configs/harness/vps_fixed_preset_controller_matrix.json` is the canonical final-evidence matrix and runs through `scripts/experiments/run_linux_vps_suite.sh` with host-managed `tc` on the demo-server container host-veth.
+- `configs/harness/vps_host_live_coexistence_bbr_guardrail.json` is the canonical final-evidence fairness guardrail and runs directly through the host `harness` binary with `tc` on `lo`.
+- `configs/harness/vps_baseline_vod_live.json` and `configs/harness/vps_demo_vod_live.json` remain workflow-validation suites rather than final evidence.
+- `configs/harness/vps_live_coexistence_bbr_guardrail.json` remains non-canonical under the current docker runner because that runner still launches exactly one foreground demo-client container per run.
+
 ## Critical VPS Fixes Discovered During Rerun
 
 1. The standalone demo-server could close its endpoint before the client finished reading the summary response.
@@ -102,9 +111,11 @@ Interpretation: AMC is not gaming throughput share. Fairness stayed essentially 
 
 The validated coexistence measurements therefore came from running the harness directly on the VPS host with `tc` applied to `lo`, not from the container host-veth runner path.
 
+This split is the current canonical documented workflow, not an accidental omission. Runner unification is deferred to Phase 3.
+
 ## Recommended Next Work
 
-1. Extend `scripts/experiments/run_linux_vps_suite.sh` so coexistence runs launch both foreground and competitor clients and preserve the existing host-veth shaping path.
+1. Phase 3 should decide whether to extend `scripts/experiments/run_linux_vps_suite.sh` so coexistence runs launch both foreground and competitor clients on the host-veth path, or keep the split workflow model permanently.
 2. Improve AMC live tail latency under `wifi_unstable` and `lte_constrained` without sacrificing the fairness result already achieved.
 3. Reduce AMC VOD startup delay; this remains the clearest VOD deficit after the latest tuning.
 

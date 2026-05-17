@@ -30,6 +30,16 @@ Phase 1 freezes the repository around the current AMC v1 experiment boundary.
 - Local controller-matrix and coexistence runs remain mandatory parity coverage, but they support reproducibility and regression checking rather than replacing the VPS evidence path.
 - Dynamic adaptation suites, QUIC datagrams in the main claim, AMC v2 sender-state expansion, and a comparative multi-controller demo lab stay outside the frozen completion boundary.
 
+## Phase 2 Frozen Workflow Model
+
+Phase 2 freezes the documentation around the workflow that is implemented today.
+
+- The canonical VPS evidence model is split across two execution modes on one GCP Linux VM.
+- The fixed-preset single-flow matrix uses `scripts/experiments/run_linux_vps_suite.sh`, host-managed `tc` on the demo-server container host-veth, and post-run `analyze-suite` through the harness container.
+- The mandatory fairness guardrail uses direct host `harness run-suite` with `tc` applied to `lo`, because the legacy docker runner still launches exactly one foreground demo-client container per run.
+- Local parity configs remain required validation support.
+- Runner unification is deferred to Phase 3. Phase 2 documents the split explicitly rather than implying a single path that does not yet exist.
+
 ## Workload model
 
 The implementation should stay trace-driven. Use `ffmpeg` and `ffprobe` offline to turn open source clips into replayable segment sets and timing manifests rather than embedding a full player or media pipeline in the Quinn client.
@@ -107,12 +117,12 @@ Recommended control plane split:
 Validated operational path in the current repository:
 
 - GCP Compute Engine Ubuntu host
-- host-side `scripts/experiments/run_linux_vps_suite.sh`
-- `sudo` execution for the runner because host-veth discovery and `tc` mutation require namespace and qdisc privileges
-- baseline-first validation through `configs/harness/vps_baseline_vod_live.json`
-- impaired preview validation through `configs/harness/vps_demo_vod_live.json`
+- compose host-veth runner through `scripts/experiments/run_linux_vps_suite.sh` for `configs/harness/vps_fixed_preset_controller_matrix.json`
+- direct host `harness run-suite` for `configs/harness/vps_host_live_coexistence_bbr_guardrail.json`
+- `sudo` execution for both paths because host-veth discovery, namespace inspection, and `tc` mutation require root access
+- `configs/harness/vps_baseline_vod_live.json` and `configs/harness/vps_demo_vod_live.json` as workflow-validation suites rather than final evidence
 
-Use loopback only for smoke tests. Avoid using two different VPS instances for the main reported results because the public Internet path reduces repeatability.
+Use loopback only for smoke tests, local bring-up, and the current host-run fairness guardrail. Avoid using two different VPS instances for the main reported results because the public Internet path reduces repeatability.
 
 Each experiment cell should be repeated with fixed seeds where applicable.
 
@@ -154,6 +164,7 @@ The current locked metric split is:
 - Coexistence and fairness checks are mandatory final evidence, but they should run as a separate experiment family with concurrent same-class flows on the same shaped link, not as replacements for the primary single-flow matrix.
 - A fairness guardrail suite should report at least throughput share and Jain fairness index for a foreground controller against a baseline competing flow.
 - The current canonical fairness suite is `configs/harness/vps_host_live_coexistence_bbr_guardrail.json` because the legacy docker VPS runner is still single-flow only.
+- The current fairness evidence is therefore a documented topology exception: it runs through the host harness with `tc` on `lo` and should be interpreted as a separate guardrail family rather than as a topology-identical replacement for the fixed matrix.
 
 Current AMC v1 reporting limit:
 
@@ -190,6 +201,16 @@ Frozen final-evidence configs for the repository:
 - `configs/harness/vps_fixed_preset_controller_matrix.json` for the primary workload matrix
 - `configs/harness/vps_host_live_coexistence_bbr_guardrail.json` for the mandatory fairness guardrail suite
 - `configs/harness/local_controller_matrix.json` and `configs/harness/local_live_immediate_amc_bbr_coexistence.json` for required local parity coverage
+
+Workflow-validation configs:
+
+- `configs/harness/vps_baseline_vod_live.json` and `configs/harness/vps_demo_vod_live.json` for VPS bring-up and operator validation
+
+Exploratory or non-canonical configs:
+
+- `configs/harness/vps_live_realtime_controller_matrix.json`
+- `configs/harness/vps_lte_constrained_live_matrix.json`
+- `configs/harness/vps_live_coexistence_bbr_guardrail.json`, which is not runnable through the current docker runner
 
 Use ablations where possible:
 
