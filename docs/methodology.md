@@ -19,6 +19,17 @@ The project compares at least four controller configurations:
 
 The comparison should use the same application workload definitions, network conditions, and measurement pipeline.
 
+## Phase 1 Frozen Completion Boundary
+
+Phase 1 freezes the repository around the current AMC v1 experiment boundary.
+
+- Completion is an AMC v1 claim only. The repository does not need an AMC v2 state expansion to count as finished.
+- The current AMC claim stays bounded to a connection-wide congestion controller modulated by the latest sender utility sample.
+- Live traffic is the primary claim surface. VOD remains required supporting evidence so continuity behavior and deficits stay visible in the final artifact.
+- Final reported evidence comes from the VPS fixed-preset matrix and the VPS fairness guardrail suite.
+- Local controller-matrix and coexistence runs remain mandatory parity coverage, but they support reproducibility and regression checking rather than replacing the VPS evidence path.
+- Dynamic adaptation suites, QUIC datagrams in the main claim, AMC v2 sender-state expansion, and a comparative multi-controller demo lab stay outside the frozen completion boundary.
+
 ## Workload model
 
 The implementation should stay trace-driven. Use `ffmpeg` and `ffprobe` offline to turn open source clips into replayable segment sets and timing manifests rather than embedding a full player or media pipeline in the Quinn client.
@@ -26,6 +37,8 @@ The implementation should stay trace-driven. Use `ffmpeg` and `ffprobe` offline 
 ### VOD
 
 VOD should model buffered delivery where late arrival is often acceptable as long as sustained throughput is high enough to avoid rebuffering.
+
+VOD remains part of the final artifact, but it is a supporting evidence family rather than the primary success criterion for the AMC claim.
 
 Suggested workload properties:
 
@@ -38,6 +51,8 @@ Suggested workload properties:
 ### Live
 
 Live traffic should model freshness-sensitive delivery where old data loses value quickly.
+
+Live is the primary surface for judging whether AMC v1 adds value under the frozen completion boundary.
 
 Suggested workload properties:
 
@@ -136,14 +151,16 @@ The current locked metric split is:
 - Any application policy that changes reliability mode or packetization must be documented clearly because it affects comparability.
 - QUIC datagrams are out of scope for the primary claim and should only be added as a secondary experiment axis if time permits.
 - Mixed-workload experiments should be separate from single-class experiments because QUIC congestion control is connection-wide.
-- Coexistence and fairness checks should run as a separate experiment family with concurrent same-class flows on the same shaped link, not as replacements for the primary single-flow matrix.
+- Coexistence and fairness checks are mandatory final evidence, but they should run as a separate experiment family with concurrent same-class flows on the same shaped link, not as replacements for the primary single-flow matrix.
 - A fairness guardrail suite should report at least throughput share and Jain fairness index for a foreground controller against a baseline competing flow.
+- The current canonical fairness suite is `configs/harness/vps_host_live_coexistence_bbr_guardrail.json` because the legacy docker VPS runner is still single-flow only.
 
 Current AMC v1 reporting limit:
 
 - reported AMC controller results correspond to a connection-wide congestion controller modulated by the latest sender utility sample
 - they do not yet demonstrate per-stream semantic isolation, packet-level semantic annotations inside Quinn, or a full sender scheduling policy redesign
 - any gain should therefore be described as evidence for the value of semantic-aware runtime signals under the present boundary, not as proof that the final AMC design space has been fully exercised
+- repository completion is intentionally frozen at this AMC v1 boundary; AMC v2 remains explicit future work rather than an implicit completion requirement
 
 ## Primary benchmark scope
 
@@ -167,6 +184,12 @@ Primary benchmark questions:
 - Does AMC improve multimedia utility under constrained networks?
 - Does AMC remain acceptably fair when competing with Quinn baseline controllers?
 - Which semantic inputs contribute most to any measured gain?
+
+Frozen final-evidence configs for the repository:
+
+- `configs/harness/vps_fixed_preset_controller_matrix.json` for the primary workload matrix
+- `configs/harness/vps_host_live_coexistence_bbr_guardrail.json` for the mandatory fairness guardrail suite
+- `configs/harness/local_controller_matrix.json` and `configs/harness/local_live_immediate_amc_bbr_coexistence.json` for required local parity coverage
 
 Use ablations where possible:
 
@@ -220,3 +243,5 @@ The report should follow a compact systems-paper structure:
 6. Results and discussion
 7. Limitations and threats to validity
 8. Conclusion and future work
+
+The final report package should bind the frozen configs, exact reproduction commands, processed summaries and comparisons, required figures, bounded interpretation, and reproducibility notes into one reviewer-readable deliverable.

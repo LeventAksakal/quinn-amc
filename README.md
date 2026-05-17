@@ -17,6 +17,18 @@ The current benchmark spec is fixed as:
 
 The repository is not currently using a dynamic adaptation suite inside the main benchmark matrix. One run corresponds to one fixed network preset.
 
+## Phase 1 Frozen Completion Boundary
+
+Phase 1 freezes repository completion around the current benchmarkable AMC v1 path.
+
+- repository completion stops at AMC v1, which currently means a latest-sample, connection-wide runtime utility signal rather than per-stream or per-packet semantic isolation
+- live traffic is the primary claim surface for AMC; VOD remains required supporting evidence for boundedness and comparability
+- final reported evidence comes from the VPS path, with `configs/harness/vps_fixed_preset_controller_matrix.json` as the required workload matrix and `configs/harness/vps_host_live_coexistence_bbr_guardrail.json` as the required fairness guardrail suite
+- local parity is still required through `configs/harness/local_controller_matrix.json` and `configs/harness/local_live_immediate_amc_bbr_coexistence.json`, but those runs support regression coverage rather than replacing the VPS evidence path
+- `configs/harness/vps_baseline_vod_live.json` and `configs/harness/vps_demo_vod_live.json` remain workflow-validation suites, not final evidence
+- `configs/harness/vps_live_realtime_controller_matrix.json`, `configs/harness/vps_lte_constrained_live_matrix.json`, and `configs/harness/vps_live_coexistence_bbr_guardrail.json` remain exploratory or non-canonical until a later phase promotes them explicitly
+- the final deliverables are a frozen evidence set, a full figure package, a reviewer-readable report package, and a single-run ratatui introspection demo from a frozen raw report
+
 ## Core idea
 
 The project does not claim to be a BBRv2 alternative.
@@ -120,11 +132,28 @@ cargo run -p harness -- analyze-suite --config configs/harness/demo_vod_live.jso
 gcloud compute instances list
 ```
 
-Validated Linux VPS runs:
+Workflow-validation VPS runs:
 
 ```bash
 sudo bash scripts/experiments/run_linux_vps_suite.sh configs/harness/vps_baseline_vod_live.json
 sudo bash scripts/experiments/run_linux_vps_suite.sh configs/harness/vps_demo_vod_live.json
+```
+
+Frozen final-evidence VPS runs:
+
+```bash
+sudo bash scripts/experiments/run_linux_vps_suite.sh configs/harness/vps_fixed_preset_controller_matrix.json
+source "$HOME/.cargo/env"
+cargo build -p harness
+sudo ./target/debug/harness run-suite --config configs/harness/vps_host_live_coexistence_bbr_guardrail.json
+sudo chown -R "$USER":"$USER" results
+```
+
+Required local parity runs:
+
+```powershell
+cargo run -p harness -- run-suite --config configs/harness/local_controller_matrix.json
+cargo run -p harness -- run-suite --config configs/harness/local_live_immediate_amc_bbr_coexistence.json
 ```
 
 The VPS runner now normalizes `results/` ownership back to the invoking user when run through `sudo`, so processed artifacts should not remain owned by `root` after a successful suite run.
@@ -165,7 +194,8 @@ Expected VPS outputs:
 - `results/processed/harness/*_comparison.json`
 - `results/figures/harness/*.svg` after `plot-suite`, including matrix-aware files such as `live_realtime_throughput_mbps.svg` and `vod_realtime_useful_media_ratio.svg`
 
-Fairness and coexistence runs are a separate experiment family. The harness now supports an optional concurrent competitor flow per run and records the competitor report plus fairness metrics in the suite summary and comparison export. A practical local smoke config is `configs/harness/local_live_immediate_amc_bbr_coexistence.json`, and the current VPS guardrail suite is `configs/harness/vps_live_coexistence_bbr_guardrail.json`.
+Fairness and coexistence runs are a separate experiment family. The harness now supports an optional concurrent competitor flow per run and records the competitor report plus fairness metrics in the suite summary and comparison export. A practical local smoke config is `configs/harness/local_live_immediate_amc_bbr_coexistence.json`.
+Fairness and coexistence are mandatory final evidence for the repository, but the currently canonical VPS path is `configs/harness/vps_host_live_coexistence_bbr_guardrail.json`. The legacy docker-runner-oriented `configs/harness/vps_live_coexistence_bbr_guardrail.json` remains non-canonical until the host-veth runner can launch both foreground and competitor clients in one suite.
 
 ## Quinn feature selection
 
@@ -277,7 +307,7 @@ cargo run -p harness -- run-suite --config configs/harness/local_controller_matr
 cargo run -p harness -- plot-suite --comparison results/processed/harness/local_controller_matrix_comparison.json
 ```
 
-For the primary benchmark path, harness suites should be organized as workload × controller × network preset matrices rather than ad hoc one-off runs.
+For the primary benchmark path, harness suites should be organized as workload × controller × network preset matrices rather than ad hoc one-off runs. The frozen final-evidence matrix is `configs/harness/vps_fixed_preset_controller_matrix.json`.
 
 The AMC analysis now prefers semantic hints from preprocessing artifacts and only falls back to harness defaults when a manifest does not provide them.
 
@@ -354,6 +384,7 @@ The recommended Linux VPS experiment architecture is:
 2. The demo server and demo client run as isolated containers on the same Docker bridge network.
 3. The host-side experiment runner iterates the scenario matrix: apply `tc`, run server and client, collect raw report, clear `tc`, move to the next run.
 4. The distroless harness container runs only the post-run `analyze-suite` step over the collected raw reports.
+5. The required coexistence guardrail suite currently runs directly through the host `harness` binary because the legacy docker runner is still single-flow only.
 
 That means the current `harness` binary has two roles:
 
@@ -373,18 +404,13 @@ sudo bash scripts/experiments/run_linux_vps_suite.sh configs/harness/vps_baselin
 sudo bash scripts/experiments/run_linux_vps_suite.sh configs/harness/vps_demo_vod_live.json
 ```
 
-For the Sprint 2 live controller matrix, run:
-
-```bash
-sudo bash scripts/experiments/run_linux_vps_suite.sh configs/harness/vps_live_realtime_controller_matrix.json
-```
-
-The VPS config at `configs/harness/vps_demo_vod_live.json` is the starting point for that path.
+The VPS config at `configs/harness/vps_demo_vod_live.json` remains the starting point for bringing up the host-veth runner path, but it is not final evidence.
 
 Current bootstrap limitation:
 
 - the host runner applies `tc` on the server container host-veth, which matches the main client-to-server media flow and is a reasonable first controlled path for this upload-style experiment
 - if later you need explicitly symmetric shaping, extend the host runner to pre-create and shape both endpoint links or move to host-managed namespaces with paired veth links
+- the host-veth docker runner does not yet support coexistence execution, so the host-run harness path is the current canonical fairness workflow
 
 ## Build status
 

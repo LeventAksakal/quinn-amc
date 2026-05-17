@@ -4,6 +4,15 @@
 
 Does a semantic-aware QUIC transport policy improve useful multimedia delivery under constrained networks while remaining acceptably fair to standard Quinn congestion controllers?
 
+## Phase 1 Frozen Evaluation Boundary
+
+- Repository completion is bounded to AMC v1 under the current latest-sample, connection-wide runtime utility design.
+- Live traffic is the primary claim surface.
+- VOD remains required supporting evidence and must be reported honestly even where AMC is not competitive on startup.
+- Final reported evidence requires both the fixed-preset VPS matrix and the separate fairness guardrail suite.
+- Local parity runs remain required validation support, but they do not replace the VPS evidence path.
+- Dynamic adaptation suites, QUIC datagrams in the main claim, AMC v2 expansion, and broader comparative demo work remain out of scope for completion.
+
 ## Baselines
 
 - Quinn NewReno
@@ -35,6 +44,8 @@ Dynamic adaptation scenarios are not part of the primary benchmark path.
 - Jain fairness index
 - share of bottleneck goodput under competition
 - RTT inflation relative to baselines
+
+Fairness and coexistence are mandatory final evidence, but they remain a separate guardrail family rather than part of the single-flow matrix.
 
 ### Multimedia resilience
 
@@ -70,7 +81,17 @@ Preferred path-control mechanism:
 - Linux `tc netem` for delay and loss
 - `tbf` or `htb` for bandwidth shaping when needed
 
-Run the full workload × controller × preset matrix cleanly before adding fairness or coexistence cases.
+The fixed-preset single-flow matrix and the separate fairness guardrail suite are both required final evidence families.
+
+Frozen final-evidence configs:
+
+- `configs/harness/vps_fixed_preset_controller_matrix.json`
+- `configs/harness/vps_host_live_coexistence_bbr_guardrail.json`
+
+Required local parity configs:
+
+- `configs/harness/local_controller_matrix.json`
+- `configs/harness/local_live_immediate_amc_bbr_coexistence.json`
 
 ## Recommended ablations
 
@@ -93,3 +114,5 @@ The first benchmarkable workload path should be:
 - TCP coexistence studies
 - datagram-based live experiments
 - larger scenario sweeps or burst-loss regimes
+- AMC v2 sender-state expansion
+- legacy docker-runner coexistence parity with the host-run fairness path
