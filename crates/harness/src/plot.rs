@@ -37,7 +37,10 @@ pub async fn plot_comparison_export(
     Ok(outputs)
 }
 
-fn render_overview_charts(output_dir: &Path, export: &SuiteComparisonExport) -> Result<Vec<PathBuf>> {
+fn render_overview_charts(
+    output_dir: &Path,
+    export: &SuiteComparisonExport,
+) -> Result<Vec<PathBuf>> {
     let mut outputs = Vec::new();
     outputs.push(render_metric_chart(
         output_dir,
@@ -149,13 +152,9 @@ fn render_matrix_charts(output_dir: &Path, export: &SuiteComparisonExport) -> Re
 
     for (_, _, mode, pace) in mode_paces {
         for metric in &metrics {
-            if let Some(output) = render_grouped_metric_chart(
-                output_dir,
-                export,
-                mode,
-                pace,
-                metric,
-            )? {
+            if let Some(output) =
+                render_grouped_metric_chart(output_dir, export, mode, pace, metric)?
+            {
                 outputs.push(output);
             }
         }
@@ -234,7 +233,13 @@ fn render_grouped_metric_chart(
         .iter()
         .filter_map(|row| {
             (metric.value)(row).map(|value| {
-                ((row.network_scenario.clone(), controller_key(row.controller).to_string()), value)
+                (
+                    (
+                        row.network_scenario.clone(),
+                        controller_key(row.controller).to_string(),
+                    ),
+                    value,
+                )
             })
         })
         .collect::<HashMap<_, _>>();
@@ -243,13 +248,14 @@ fn render_grouped_metric_chart(
         return Ok(None);
     }
 
-    let file_name = format!("{}_{}_{}.svg", mode_key(mode), pace_key(pace), metric.file_stem);
+    let file_name = format!(
+        "{}_{}_{}.svg",
+        mode_key(mode),
+        pace_key(pace),
+        metric.file_stem
+    );
     let output_path = output_dir.join(file_name);
-    let max_value = values
-        .values()
-        .copied()
-        .fold(0.0_f64, f64::max)
-        .max(1.0);
+    let max_value = values.values().copied().fold(0.0_f64, f64::max).max(1.0);
 
     {
         let backend = SVGBackend::new(&output_path, (1800, 960));
@@ -297,13 +303,15 @@ fn render_grouped_metric_chart(
         for (controller_index, controller) in controllers.iter().enumerate() {
             let color = controller_color(controller);
             chart
-                .draw_series(scenarios.iter().enumerate().filter_map(|(scenario_index, scenario)| {
-                    let value = values.get(&(scenario.clone(), controller.clone()))?;
-                    let center = scenario_index as f64;
-                    let x0 = center - (group_width / 2.0) + controller_index as f64 * bar_width;
-                    let x1 = x0 + bar_width * 0.9;
-                    Some(Rectangle::new([(x0, 0.0), (x1, *value)], color.filled()))
-                }))?
+                .draw_series(scenarios.iter().enumerate().filter_map(
+                    |(scenario_index, scenario)| {
+                        let value = values.get(&(scenario.clone(), controller.clone()))?;
+                        let center = scenario_index as f64;
+                        let x0 = center - (group_width / 2.0) + controller_index as f64 * bar_width;
+                        let x1 = x0 + bar_width * 0.9;
+                        Some(Rectangle::new([(x0, 0.0), (x1, *value)], color.filled()))
+                    },
+                ))?
                 .label(controller_title(controller))
                 .legend(move |(x, y)| {
                     Rectangle::new([(x, y - 6), (x + 16, y + 6)], color.filled())
