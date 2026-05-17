@@ -9,9 +9,9 @@
 ## Experiment completion
 
 - Keep the fixed network presets stable across reruns and make any later preset change an explicit scope decision rather than quiet tuning.
-- Phase 3: decide whether to extend the legacy VPS docker runner so coexistence runs can share the same host-veth path as the fixed-preset matrix, or retain the documented split workflow model.
+- Keep the current split VPS workflow model explicit until a later phase truly adds multi-client docker-runner support; do not blur the compose matrix path and the host fairness path back together.
 - Decide whether the host-side runner should remain server-veth-only or move to explicitly symmetric shaping for later claims.
-- Add explicit regeneration checks on real media-toolchain runs and verify regenerated manifests still work with the client and harness.
+- Run an explicit end-to-end regeneration check from `scripts/media/preprocess_streams.sh` through a local harness suite on both packaged assets before calling the replay pipeline frozen.
 
 ## AMC follow-up
 

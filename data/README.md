@@ -18,4 +18,12 @@ The runtime sender should consume the derived artifacts and replay manifest, not
 
 The replay manifest is also where preprocessing now attaches lightweight semantic hints such as importance tiers, dependency depth hints, and freshness windows. The harness can use those hints when scoring replay units through `amc-core`.
 
+Replay manifests are versioned inputs. The current builder writes `schema_version = 1`, and the client/harness preflight now validates that:
+
+- the manifest file exists and is non-empty
+- the init segment exists and is non-empty
+- every referenced segment exists
+- each segment size matches `size_bytes`
+- the manifest is not older than any referenced payload file
+
 The current heuristic rules for those semantic hints are documented in `docs/replay-semantics.md`.

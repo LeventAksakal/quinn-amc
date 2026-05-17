@@ -10,6 +10,8 @@ These hints are not meant to be the final AMC semantic model. They are a reprodu
 
 The preprocessing step in `scripts/media/build_replay_manifest.py` augments each replay segment with a `semantic_hint` block and writes global defaults into `semantic_defaults`.
 
+Replay manifests now also carry `schema_version = 1`. The client and harness treat that as the current checked manifest contract.
+
 The harness then prefers those hint fields over its own fallback profile when it scores replay units through `amc-core`.
 
 ## Current heuristic rules
@@ -63,6 +65,8 @@ Reasoning:
 ## Fallback behavior
 
 If a replay manifest does not provide semantic hints, the harness falls back to its configured semantic profile.
+
+If a replay manifest omits `schema_version`, the current client treats it as the legacy equivalent of schema version `1` so older checked-in artifacts remain readable while regeneration catches up.
 
 That fallback still controls:
 

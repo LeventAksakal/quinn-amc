@@ -20,8 +20,12 @@ use tokio::{
 };
 use tracing::info;
 
+const REPLAY_MANIFEST_SCHEMA_VERSION: u32 = 1;
+
 #[derive(Clone, Debug, Deserialize)]
 struct ReplayManifest {
+    #[serde(default)]
+    schema_version: Option<u32>,
     asset_name: String,
     init_segment: String,
     #[serde(default)]
@@ -77,6 +81,21 @@ pub struct PreparedReplayInput {
     semantic_defaults: ReplaySemanticDefaults,
     init_segment: PreparedInitSegment,
     segments: Vec<PreparedReplaySegment>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ReplayAssetInventory {
+    pub asset_name: String,
+    pub schema_version: u32,
+    pub init_segment_path: PathBuf,
+    pub segment_paths: Vec<PathBuf>,
+    pub total_payload_bytes: u64,
+}
+
+struct ReplayInspection {
+    manifest: ReplayManifest,
+    asset_root: PathBuf,
+    inventory: ReplayAssetInventory,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -635,16 +654,14 @@ async fn load_manifest(path: &Path) -> Result<ReplayManifest> {
     serde_json::from_slice(&manifest_bytes).context("failed to parse replay manifest JSON")
 }
 
-pub async fn prepare_replay_input(path: &Path) -> Result<PreparedReplayInput> {
-    let manifest = load_manifest(path).await?;
-    let asset_root = path
-        .parent()
-        .context("replay manifest path must have a parent directory")?
-        .join("..")
-        .join("segments")
-        .join(&manifest.asset_name);
+pub async fn inspect_replay_input(path: &Path) -> Result<ReplayAssetInventory> {
+    Ok(inspect_replay_input_impl(path).await?.inventory)
+}
 
-    validate_replay_input(&manifest)?;
+pub async fn prepare_replay_input(path: &Path) -> Result<PreparedReplayInput> {
+    let inspection = inspect_replay_input_impl(path).await?;
+    let manifest = inspection.manifest;
+    let asset_root = inspection.asset_root;
 
     let init_path = asset_root.join(&manifest.init_segment);
     let init_payload = read_payload_bytes(&init_path, None, "init segment").await?;
@@ -692,7 +709,117 @@ pub async fn prepare_replay_input(path: &Path) -> Result<PreparedReplayInput> {
     })
 }
 
+async fn inspect_replay_input_impl(path: &Path) -> Result<ReplayInspection> {
+    let manifest = load_manifest(path).await?;
+    validate_replay_input(&manifest)?;
+
+    let asset_root = replay_asset_root(path, &manifest)?;
+    let manifest_metadata = fs::metadata(path)
+        .await
+        .with_context(|| format!("failed to inspect replay manifest {}", path.display()))?;
+    if !manifest_metadata.is_file() {
+        return Err(anyhow!(
+            "replay manifest path is not a file: {}",
+            path.display()
+        ));
+    }
+    let manifest_modified = manifest_metadata
+        .modified()
+        .with_context(|| format!("failed to read mtime for {}", path.display()))?;
+
+    let init_segment_path = asset_root.join(&manifest.init_segment);
+    let init_metadata = fs::metadata(&init_segment_path)
+        .await
+        .with_context(|| format!("missing init segment {}", init_segment_path.display()))?;
+    if !init_metadata.is_file() {
+        return Err(anyhow!(
+            "init segment path is not a file: {}",
+            init_segment_path.display()
+        ));
+    }
+    if init_metadata.len() == 0 {
+        return Err(anyhow!("init segment is empty: {}", init_segment_path.display()));
+    }
+
+    let mut seen_sequences = HashSet::with_capacity(manifest.segments.len());
+    let mut previous_sequence = None;
+    let mut previous_start_time_ms = None;
+    let mut total_payload_bytes = 0u64;
+    let mut segment_paths = Vec::with_capacity(manifest.segments.len());
+    let mut newest_asset_path = init_segment_path.clone();
+    let mut newest_asset_modified = init_metadata
+        .modified()
+        .with_context(|| format!("failed to read mtime for {}", init_segment_path.display()))?;
+
+    for segment in &manifest.segments {
+        validate_replay_segment(
+            segment,
+            &mut seen_sequences,
+            &mut previous_sequence,
+            &mut previous_start_time_ms,
+            &manifest.semantic_defaults,
+        )?;
+
+        let segment_path = asset_root.join(&segment.relative_path);
+        let segment_metadata = fs::metadata(&segment_path)
+            .await
+            .with_context(|| format!("missing segment payload {}", segment_path.display()))?;
+        if !segment_metadata.is_file() {
+            return Err(anyhow!(
+                "segment payload path is not a file: {}",
+                segment_path.display()
+            ));
+        }
+        if segment_metadata.len() == 0 {
+            return Err(anyhow!(
+                "segment payload is empty: {}",
+                segment_path.display()
+            ));
+        }
+        if segment_metadata.len() != segment.size_bytes {
+            return Err(anyhow!(
+                "segment payload size mismatch for {}: manifest says {}, file has {}",
+                segment_path.display(),
+                segment.size_bytes,
+                segment_metadata.len()
+            ));
+        }
+
+        let segment_modified = segment_metadata
+            .modified()
+            .with_context(|| format!("failed to read mtime for {}", segment_path.display()))?;
+        if segment_modified > newest_asset_modified {
+            newest_asset_modified = segment_modified;
+            newest_asset_path = segment_path.clone();
+        }
+
+        total_payload_bytes = total_payload_bytes.saturating_add(segment.size_bytes);
+        segment_paths.push(segment_path);
+    }
+
+    if newest_asset_modified > manifest_modified {
+        return Err(anyhow!(
+            "replay manifest {} is older than asset payload {}; regenerate the replay manifest before running the suite",
+            path.display(),
+            newest_asset_path.display()
+        ));
+    }
+
+    Ok(ReplayInspection {
+        asset_root,
+        inventory: ReplayAssetInventory {
+            asset_name: manifest.asset_name.clone(),
+            schema_version: replay_manifest_schema_version(&manifest)?,
+            init_segment_path,
+            segment_paths,
+            total_payload_bytes,
+        },
+        manifest,
+    })
+}
+
 fn validate_replay_input(manifest: &ReplayManifest) -> Result<()> {
+    let _ = replay_manifest_schema_version(manifest)?;
     if manifest.asset_name.trim().is_empty() {
         return Err(anyhow!("replay manifest asset_name must not be empty"));
     }
@@ -718,6 +845,27 @@ fn validate_replay_input(manifest: &ReplayManifest) -> Result<()> {
     validate_asset_relative_path(&manifest.init_segment, "init_segment")?;
 
     Ok(())
+}
+
+fn replay_manifest_schema_version(manifest: &ReplayManifest) -> Result<u32> {
+    let schema_version = manifest.schema_version.unwrap_or(REPLAY_MANIFEST_SCHEMA_VERSION);
+    if schema_version != REPLAY_MANIFEST_SCHEMA_VERSION {
+        return Err(anyhow!(
+            "unsupported replay manifest schema_version {} (expected {})",
+            schema_version,
+            REPLAY_MANIFEST_SCHEMA_VERSION
+        ));
+    }
+    Ok(schema_version)
+}
+
+fn replay_asset_root(path: &Path, manifest: &ReplayManifest) -> Result<PathBuf> {
+    Ok(path
+        .parent()
+        .context("replay manifest path must have a parent directory")?
+        .join("..")
+        .join("segments")
+        .join(&manifest.asset_name))
 }
 
 fn validate_replay_segment(
@@ -1066,4 +1214,93 @@ async fn read_payload_bytes(
     }
 
     Ok(payload)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::inspect_replay_input;
+    use anyhow::Result;
+    use serde_json::json;
+    use std::{env, fs as stdfs, path::PathBuf, time::{Duration, SystemTime, UNIX_EPOCH}};
+    use tokio::fs;
+
+    fn unique_temp_dir(label: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        env::temp_dir().join(format!("quinn-amc-{label}-{}-{unique}", std::process::id()))
+    }
+
+    async fn write_replay_fixture(root: &PathBuf, manifest_size_bytes: u64) -> Result<PathBuf> {
+        let manifests_dir = root.join("data/processed/manifests");
+        let segments_dir = root.join("data/processed/segments/test_asset");
+        fs::create_dir_all(&manifests_dir).await?;
+        fs::create_dir_all(&segments_dir).await?;
+
+        fs::write(segments_dir.join("test_asset_init.mp4"), b"init-bytes").await?;
+        fs::write(segments_dir.join("test_asset_chunk_00001.m4s"), b"segment-bytes").await?;
+
+        let manifest_path = manifests_dir.join("test_asset_replay.json");
+        let manifest = json!({
+            "schema_version": 1,
+            "asset_name": "test_asset",
+            "init_segment": "test_asset_init.mp4",
+            "semantic_defaults": {
+                "startup_segment_count": 1,
+                "default_dependency_depth_hint": 1,
+                "default_freshness_window_ms": 1000
+            },
+            "segments": [
+                {
+                    "sequence": 1,
+                    "relative_path": "test_asset_chunk_00001.m4s",
+                    "start_time_ms": 0,
+                    "duration_ms": 1000,
+                    "size_bytes": manifest_size_bytes,
+                    "semantic_hint": {
+                        "importance_hint": "critical",
+                        "dependency_depth_hint": 0,
+                        "independent": true,
+                        "freshness_window_ms": 1000
+                    }
+                }
+            ]
+        });
+        fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?).await?;
+        Ok(manifest_path)
+    }
+
+    #[tokio::test]
+    async fn inspect_replay_input_rejects_size_mismatch() -> Result<()> {
+        let root = unique_temp_dir("manifest-size-mismatch");
+        fs::create_dir_all(&root).await?;
+        let manifest_path = write_replay_fixture(&root, 999).await?;
+
+        let error = inspect_replay_input(&manifest_path).await.unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("segment payload size mismatch"));
+
+        stdfs::remove_dir_all(&root)?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn inspect_replay_input_rejects_stale_manifest() -> Result<()> {
+        let root = unique_temp_dir("manifest-stale");
+        fs::create_dir_all(&root).await?;
+        let manifest_path = write_replay_fixture(&root, b"segment-bytes".len() as u64).await?;
+
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+        let segment_path = root
+            .join("data/processed/segments/test_asset/test_asset_chunk_00001.m4s");
+        fs::write(&segment_path, b"segment-bytes").await?;
+
+        let error = inspect_replay_input(&manifest_path).await.unwrap_err();
+        assert!(error.to_string().contains("older than asset payload"));
+
+        stdfs::remove_dir_all(&root)?;
+        Ok(())
+    }
 }

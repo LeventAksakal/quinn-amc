@@ -40,6 +40,16 @@ Phase 2 freezes the documentation around the workflow that is implemented today.
 - Local parity configs remain required validation support.
 - Runner unification is deferred to Phase 3. Phase 2 documents the split explicitly rather than implying a single path that does not yet exist.
 
+## Phase 3 Reproducibility Hardening
+
+Phase 3 keeps the split workflow model but hardens the artifact contract around it.
+
+- Replay manifests are now treated as checked inputs rather than best-effort metadata.
+- Harness preflight validates the replay manifest, init segment, referenced media segments, and segment sizes before a suite starts.
+- Raw-report freshness now depends on the suite config, replay manifest, init segment, and every referenced media segment so stale processed outputs are harder to reuse accidentally.
+- Processed harness outputs embed SHA-256 provenance for the suite config, replay manifest, and raw report used to derive each analysis artifact.
+- The compose VPS runner fails fast when a config requests coexistence, because that path still supports only one foreground demo-client container per run.
+
 ## Workload model
 
 The implementation should stay trace-driven. Use `ffmpeg` and `ffprobe` offline to turn open source clips into replayable segment sets and timing manifests rather than embedding a full player or media pipeline in the Quinn client.
@@ -121,6 +131,12 @@ Validated operational path in the current repository:
 - direct host `harness run-suite` for `configs/harness/vps_host_live_coexistence_bbr_guardrail.json`
 - `sudo` execution for both paths because host-veth discovery, namespace inspection, and `tc` mutation require root access
 - `configs/harness/vps_baseline_vod_live.json` and `configs/harness/vps_demo_vod_live.json` as workflow-validation suites rather than final evidence
+
+Operational reproducibility rules in the current repository:
+
+- Regenerate replay artifacts with `scripts/media/preprocess_streams.sh` whenever segment payloads change.
+- Treat a replay manifest older than any referenced segment file as invalid until regeneration is rerun.
+- Prefer processed outputs whose `input_provenance` matches the suite config, replay manifest, and raw report under review.
 
 Use loopback only for smoke tests, local bring-up, and the current host-run fairness guardrail. Avoid using two different VPS instances for the main reported results because the public Internet path reduces repeatability.
 

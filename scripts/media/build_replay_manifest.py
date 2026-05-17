@@ -246,6 +246,7 @@ def main() -> int:
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     replay_manifest = {
+        "schema_version": 1,
         "asset_name": asset_name,
         "init_segment": init_segment,
         "mpd_path": mpd_path.name,

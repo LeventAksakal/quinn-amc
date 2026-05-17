@@ -188,6 +188,12 @@ impl SuiteServer {
         &self.cert_der
     }
 
+    pub fn local_addr(&self) -> Result<SocketAddr> {
+        self.endpoint
+            .local_addr()
+            .context("failed to read server local address")
+    }
+
     pub async fn run_transfer(&self, report_out: &Path) -> Result<TransferReport> {
         let incoming = self
             .endpoint

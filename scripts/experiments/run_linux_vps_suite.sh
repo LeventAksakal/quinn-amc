@@ -42,8 +42,54 @@ require_command timeout
 [[ -f "$CONFIG_ABS" ]] || fail "config not found: $CONFIG_ABS"
 [[ -f "$COMPOSE_FILE" ]] || fail "compose file not found: $COMPOSE_FILE"
 
+validate_runner_supported_config() {
+  if jq -e '.runs[] | select(.coexistence != null)' "$CONFIG_ABS" >/dev/null 2>&1; then
+    fail "config $CONFIG_PATH includes coexistence flows, but run_linux_vps_suite.sh launches exactly one demo-client container per run. Use the host harness path with configs/harness/vps_host_live_coexistence_bbr_guardrail.json instead."
+  fi
+}
+
+validate_replay_manifest_assets() {
+  local manifest_rel_path manifest_abs_path asset_name init_segment asset_dir segment_count
+  manifest_rel_path="$(jq -r '.replay_manifest' "$CONFIG_ABS")"
+  [[ -n "$manifest_rel_path" && "$manifest_rel_path" != "null" ]] || fail "config $CONFIG_PATH is missing replay_manifest"
+  manifest_abs_path="$WORKSPACE_ROOT/$manifest_rel_path"
+  [[ -f "$manifest_abs_path" ]] || fail "replay manifest not found: $manifest_abs_path"
+  [[ -s "$manifest_abs_path" ]] || fail "replay manifest is empty: $manifest_abs_path"
+
+  asset_name="$(jq -r '.asset_name // empty' "$manifest_abs_path")"
+  init_segment="$(jq -r '.init_segment // empty' "$manifest_abs_path")"
+  [[ -n "$asset_name" ]] || fail "replay manifest $manifest_abs_path is missing asset_name"
+  [[ -n "$init_segment" ]] || fail "replay manifest $manifest_abs_path is missing init_segment"
+
+  asset_dir="$WORKSPACE_ROOT/data/processed/segments/$asset_name"
+  [[ -d "$asset_dir" ]] || fail "segment asset directory not found: $asset_dir"
+  [[ -f "$asset_dir/$init_segment" ]] || fail "init segment not found: $asset_dir/$init_segment"
+  [[ -s "$asset_dir/$init_segment" ]] || fail "init segment is empty: $asset_dir/$init_segment"
+
+  segment_count=0
+  while IFS=$'\t' read -r relative_path size_bytes; do
+    [[ -n "$relative_path" ]] || continue
+    local segment_path actual_size
+    segment_path="$asset_dir/$relative_path"
+    [[ -f "$segment_path" ]] || fail "segment payload not found: $segment_path"
+    [[ -s "$segment_path" ]] || fail "segment payload is empty: $segment_path"
+    actual_size="$(stat -c %s "$segment_path")"
+    [[ "$actual_size" == "$size_bytes" ]] || fail "segment payload size mismatch for $segment_path: manifest says $size_bytes, file has $actual_size"
+    if [[ "$manifest_abs_path" -ot "$segment_path" ]]; then
+      fail "replay manifest $manifest_abs_path is older than asset payload $segment_path; rerun scripts/media/preprocess_streams.sh before executing the suite"
+    fi
+    segment_count=$((segment_count + 1))
+  done < <(jq -r '.segments[] | "\(.relative_path)\t\(.size_bytes)"' "$manifest_abs_path")
+
+  [[ "$segment_count" -gt 0 ]] || fail "replay manifest $manifest_abs_path does not reference any media segments"
+  log "replay manifest validated: asset=$asset_name segments=$segment_count manifest=$manifest_rel_path"
+}
+
 export DOCKER_BUILDKIT="${DOCKER_BUILDKIT:-1}"
 export COMPOSE_DOCKER_CLI_BUILD="${COMPOSE_DOCKER_CLI_BUILD:-1}"
+
+validate_runner_supported_config
+validate_replay_manifest_assets
 
 can_sudo_non_interactive() {
   sudo -n true >/dev/null 2>&1

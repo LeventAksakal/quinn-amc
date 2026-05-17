@@ -53,10 +53,31 @@ pub struct ReplaySemanticHint {
 pub struct SuiteSummary {
     pub suite_name: String,
     pub replay_manifest: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_provenance: Option<SuiteInputProvenance>,
     pub network_scenarios: Vec<NetworkScenario>,
     pub runs: Vec<RunOutcome>,
     #[serde(default)]
     pub skipped_runs: Vec<SkippedRun>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ArtifactProvenance {
+    pub path: String,
+    pub sha256: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SuiteInputProvenance {
+    pub suite_config: ArtifactProvenance,
+    pub replay_manifest: ArtifactProvenance,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct RunInputProvenance {
+    pub suite_config: ArtifactProvenance,
+    pub replay_manifest: ArtifactProvenance,
+    pub raw_report: ArtifactProvenance,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -110,6 +131,8 @@ pub struct SkippedRun {
 pub struct SuiteComparisonExport {
     pub suite_name: String,
     pub replay_manifest: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_provenance: Option<SuiteInputProvenance>,
     pub matrix_groups: Vec<ComparisonGroup>,
     pub rows: Vec<ComparisonRow>,
     #[serde(default)]
@@ -201,6 +224,8 @@ pub struct AmcRunAnalysis {
     pub asset_name: String,
     pub network_scenario: NetworkScenario,
     pub semantic_profile: SemanticProfileConfig,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_provenance: Option<RunInputProvenance>,
     pub aggregate: AmcAggregate,
     pub units: Vec<AmcUnitAnalysis>,
 }
@@ -627,6 +652,7 @@ pub fn analyze_report(
         asset_name: replay_manifest.asset_name.clone(),
         network_scenario: network_scenario.clone(),
         semantic_profile: semantic_profile.clone(),
+        input_provenance: None,
         aggregate,
         units,
     }
@@ -910,6 +936,7 @@ pub fn build_suite_comparison_export(
     SuiteComparisonExport {
         suite_name: suite_name.to_string(),
         replay_manifest: replay_manifest.to_string(),
+        input_provenance: None,
         matrix_groups,
         rows,
         skipped_runs: skipped_runs.to_vec(),

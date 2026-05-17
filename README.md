@@ -172,6 +172,8 @@ sudo chown -R "$USER":"$USER" results
 
 The first command is the canonical single-flow matrix path. The second command sequence is the canonical fairness guardrail path. They intentionally use different execution modes in the current repository because `run_linux_vps_suite.sh` is still single-client only.
 
+The compose VPS runner now rejects configs that contain `runs[*].coexistence` and validates the referenced replay manifest before launching any container work. That preflight checks the manifest file itself, the init segment, every referenced media segment, each declared `size_bytes`, and whether the manifest is stale relative to any referenced segment payload.
+
 Required local parity runs:
 
 ```powershell
@@ -208,6 +210,12 @@ The suite run path now avoids several fixed per-cell costs:
 - freshly generated raw reports stay in memory for immediate AMC analysis instead of being written and reread first
 - internal segment headers use a compact binary encoding, while human-facing artifacts remain JSON
 - `run-suite` skips transport for runs whose raw report is newer than the suite config and replay manifest, so repeated iterations only rerun stale cells
+
+Processed harness outputs now also carry input provenance:
+
+- suite summaries and comparison exports include SHA-256 digests for the suite config and replay manifest
+- per-run AMC analyses include the same suite inputs plus the raw report digest used to produce that analysis
+- replay-manifest freshness checks include referenced init and media segments, not just the manifest JSON timestamp
 
 Expected VPS outputs:
 

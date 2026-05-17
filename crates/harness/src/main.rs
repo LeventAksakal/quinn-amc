@@ -12,17 +12,19 @@ use std::{
 };
 
 use analysis::{
-    CoexistenceOutcome, RunOutcome, SkippedRun, SuiteSummary, analyze_report,
+    ArtifactProvenance, CoexistenceOutcome, RunInputProvenance, RunOutcome, SkippedRun,
+    SuiteInputProvenance, SuiteSummary, analyze_report,
     build_suite_comparison_export, compute_fairness_metrics, load_replay_manifest,
     load_transfer_report, write_amc_analysis, write_comparison_export,
 };
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use config::{SuiteConfig, find_network_scenario, validate_suite_config};
-use demo_client::{Args as ClientArgs, prepare_replay_input, run_prepared};
+use demo_client::{Args as ClientArgs, inspect_replay_input, prepare_replay_input, run_prepared};
 use demo_server::{SuiteServer, TransferReport};
 use network::{apply_network_scenario, validate_network_scenario_for_run};
 use plot::plot_comparison_export;
+use sha2::{Digest, Sha256};
 use tokio::{fs, task::JoinHandle};
 use tracing::{info, warn};
 
@@ -111,8 +113,12 @@ async fn run_local_suite(
     config: &SuiteConfig,
 ) -> Result<PathBuf> {
     let replay_manifest_path = resolve_path(workspace_root, &config.replay_manifest);
+    let replay_inventory = inspect_replay_input(&replay_manifest_path).await?;
+    let replay_dependency_paths = replay_dependency_paths(&replay_manifest_path, &replay_inventory);
     let replay_manifest = load_replay_manifest(&replay_manifest_path).await?;
     let prepared_replay = prepare_replay_input(&replay_manifest_path).await?;
+    let suite_input_provenance =
+        suite_input_provenance(workspace_root, config_path, &replay_manifest_path).await?;
     let cert_path = resolve_path(workspace_root, &config.cert_path);
     let suite_server_addr: SocketAddr = format!("{}:{}", config.host, config.base_port)
         .parse()
@@ -135,13 +141,9 @@ async fn run_local_suite(
         let coexistence_report_path = coexistence_report_output_path(workspace_root, config, run);
         let coexistence_amc_path = coexistence_amc_output_path(workspace_root, config, run);
         let report_is_reusable =
-            report_is_fresh(&absolute_report_path, &[config_path, &replay_manifest_path]).await?
+            report_is_fresh(&absolute_report_path, &replay_dependency_paths).await?
                 && if run.coexistence.is_some() {
-                    report_is_fresh(
-                        &coexistence_report_path,
-                        &[config_path, &replay_manifest_path],
-                    )
-                    .await?
+                    report_is_fresh(&coexistence_report_path, &replay_dependency_paths).await?
                 } else {
                     true
                 };
@@ -260,12 +262,16 @@ async fn run_local_suite(
                 transfer_report.summary.baseline_controller
             ));
         }
-        let amc_analysis = analyze_report(
+        let mut amc_analysis = analyze_report(
             run,
             network_scenario,
             &config.semantic_profile,
             &replay_manifest,
             &transfer_report,
+        );
+        amc_analysis.input_provenance = Some(
+            run_input_provenance(workspace_root, &suite_input_provenance, &absolute_report_path)
+                .await?,
         );
         write_amc_analysis(&amc_analysis_path, &amc_analysis).await?;
 
@@ -280,12 +286,20 @@ async fn run_local_suite(
                     coexistence_report.summary.baseline_controller
                 ));
             }
-            let coexistence_analysis = analyze_report(
+            let mut coexistence_analysis = analyze_report(
                 run,
                 network_scenario,
                 &config.semantic_profile,
                 &replay_manifest,
                 &coexistence_report,
+            );
+            coexistence_analysis.input_provenance = Some(
+                run_input_provenance(
+                    workspace_root,
+                    &suite_input_provenance,
+                    &coexistence_report_path,
+                )
+                .await?,
             );
             write_amc_analysis(&coexistence_amc_path, &coexistence_analysis).await?;
 
@@ -326,7 +340,14 @@ async fn run_local_suite(
         server.shutdown().await;
     }
 
-    write_suite_summary(workspace_root, config, runs, Vec::new()).await
+    write_suite_summary(
+        workspace_root,
+        config,
+        runs,
+        Vec::new(),
+        Some(suite_input_provenance),
+    )
+    .await
 }
 
 async fn analyze_existing_suite(
@@ -335,7 +356,11 @@ async fn analyze_existing_suite(
     config: &SuiteConfig,
 ) -> Result<PathBuf> {
     let replay_manifest_path = resolve_path(workspace_root, &config.replay_manifest);
+    let replay_inventory = inspect_replay_input(&replay_manifest_path).await?;
+    let _replay_dependency_paths = replay_dependency_paths(&replay_manifest_path, &replay_inventory);
     let replay_manifest = load_replay_manifest(&replay_manifest_path).await?;
+    let suite_input_provenance =
+        suite_input_provenance(workspace_root, config_path, &replay_manifest_path).await?;
     let mut runs = Vec::with_capacity(config.runs.len());
     let mut skipped_runs = Vec::new();
 
@@ -396,12 +421,16 @@ async fn analyze_existing_suite(
                 transfer_report.summary.baseline_controller
             ));
         }
-        let amc_analysis = analyze_report(
+        let mut amc_analysis = analyze_report(
             run,
             network_scenario,
             &config.semantic_profile,
             &replay_manifest,
             &transfer_report,
+        );
+        amc_analysis.input_provenance = Some(
+            run_input_provenance(workspace_root, &suite_input_provenance, &absolute_report_path)
+                .await?,
         );
         write_amc_analysis(&amc_analysis_path, &amc_analysis).await?;
 
@@ -416,12 +445,20 @@ async fn analyze_existing_suite(
                     coexistence_report.summary.baseline_controller
                 ));
             }
-            let coexistence_analysis = analyze_report(
+            let mut coexistence_analysis = analyze_report(
                 run,
                 network_scenario,
                 &config.semantic_profile,
                 &replay_manifest,
                 &coexistence_report,
+            );
+            coexistence_analysis.input_provenance = Some(
+                run_input_provenance(
+                    workspace_root,
+                    &suite_input_provenance,
+                    &coexistence_report_path,
+                )
+                .await?,
             );
             write_amc_analysis(&coexistence_amc_path, &coexistence_analysis).await?;
 
@@ -465,7 +502,14 @@ async fn analyze_existing_suite(
         ));
     }
 
-    write_suite_summary(workspace_root, config, runs, skipped_runs).await
+    write_suite_summary(
+        workspace_root,
+        config,
+        runs,
+        skipped_runs,
+        Some(suite_input_provenance),
+    )
+    .await
 }
 
 async fn write_suite_summary(
@@ -473,6 +517,7 @@ async fn write_suite_summary(
     config: &SuiteConfig,
     runs: Vec<RunOutcome>,
     skipped_runs: Vec<SkippedRun>,
+    input_provenance: Option<SuiteInputProvenance>,
 ) -> Result<PathBuf> {
     let summary = SuiteSummary {
         suite_name: config.suite_name.clone(),
@@ -480,6 +525,7 @@ async fn write_suite_summary(
             workspace_root,
             &resolve_path(workspace_root, &config.replay_manifest),
         ),
+        input_provenance: input_provenance.clone(),
         network_scenarios: config.network_scenarios.clone(),
         runs,
         skipped_runs,
@@ -487,7 +533,7 @@ async fn write_suite_summary(
     let summary_path = summary_output_path(workspace_root, config);
     write_summary(&summary_path, &summary).await?;
     let comparison_path = comparison_output_path(workspace_root, config);
-    let comparison_export = build_suite_comparison_export(
+    let mut comparison_export = build_suite_comparison_export(
         &summary.suite_name,
         &summary.replay_manifest,
         &summary.network_scenarios,
@@ -495,6 +541,7 @@ async fn write_suite_summary(
         &summary.runs,
         &summary.skipped_runs,
     );
+    comparison_export.input_provenance = input_provenance;
     write_comparison_export(&comparison_path, &comparison_export).await?;
     Ok(summary_path)
 }
@@ -674,6 +721,21 @@ async fn preflight_suite(
 
     let replay_manifest_path = resolve_path(workspace_root, &config.replay_manifest);
     ensure_file_exists(&replay_manifest_path, "replay manifest").await?;
+    let replay_inventory = inspect_replay_input(&replay_manifest_path)
+        .await
+        .with_context(|| {
+            format!(
+                "replay input preflight failed for {}",
+                replay_manifest_path.display()
+            )
+        })?;
+    info!(
+        asset = %replay_inventory.asset_name,
+        schema_version = replay_inventory.schema_version,
+        segment_count = replay_inventory.segment_paths.len(),
+        total_payload_bytes = replay_inventory.total_payload_bytes,
+        "replay input preflight passed"
+    );
 
     let summary_path = summary_output_path(workspace_root, config);
     let comparison_path = comparison_output_path(workspace_root, config);
@@ -851,4 +913,166 @@ async fn report_is_fresh(report_path: &Path, dependency_paths: &[&Path]) -> Resu
     }
 
     Ok(true)
+}
+
+fn replay_dependency_paths<'a>(
+    replay_manifest_path: &'a Path,
+    replay_inventory: &'a demo_client::ReplayAssetInventory,
+) -> Vec<&'a Path> {
+    let mut dependency_paths = Vec::with_capacity(2 + replay_inventory.segment_paths.len());
+    dependency_paths.push(replay_manifest_path);
+    dependency_paths.push(replay_inventory.init_segment_path.as_path());
+    dependency_paths.extend(
+        replay_inventory
+            .segment_paths
+            .iter()
+            .map(std::path::PathBuf::as_path),
+    );
+    dependency_paths
+}
+
+async fn suite_input_provenance(
+    workspace_root: &Path,
+    config_path: &Path,
+    replay_manifest_path: &Path,
+) -> Result<SuiteInputProvenance> {
+    Ok(SuiteInputProvenance {
+        suite_config: artifact_provenance(workspace_root, config_path).await?,
+        replay_manifest: artifact_provenance(workspace_root, replay_manifest_path).await?,
+    })
+}
+
+async fn run_input_provenance(
+    workspace_root: &Path,
+    suite_input_provenance: &SuiteInputProvenance,
+    raw_report_path: &Path,
+) -> Result<RunInputProvenance> {
+    Ok(RunInputProvenance {
+        suite_config: suite_input_provenance.suite_config.clone(),
+        replay_manifest: suite_input_provenance.replay_manifest.clone(),
+        raw_report: artifact_provenance(workspace_root, raw_report_path).await?,
+    })
+}
+
+async fn artifact_provenance(workspace_root: &Path, path: &Path) -> Result<ArtifactProvenance> {
+    let bytes = fs::read(path)
+        .await
+        .with_context(|| format!("failed to read {} for provenance", path.display()))?;
+    let digest = Sha256::digest(&bytes);
+    Ok(ArtifactProvenance {
+        path: path_relative_to(workspace_root, path),
+        sha256: hex_digest(&digest),
+    })
+}
+
+fn hex_digest(bytes: &[u8]) -> String {
+    let mut hex = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        let _ = write!(&mut hex, "{byte:02x}");
+    }
+    hex
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::Result;
+    use demo_client::{Args as ClientArgs, BaselineController, Pace, ReplayMode, prepare_replay_input, run_prepared};
+    use std::{env, fs as stdfs, sync::Arc, time::{SystemTime, UNIX_EPOCH}};
+    use tokio::{fs, task::JoinHandle};
+
+    fn unique_temp_dir(label: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        env::temp_dir().join(format!("quinn-amc-{label}-{}-{unique}", std::process::id()))
+    }
+
+    async fn write_replay_fixture(root: &Path) -> Result<PathBuf> {
+        let manifests_dir = root.join("data/processed/manifests");
+        let segments_dir = root.join("data/processed/segments/test_asset");
+        fs::create_dir_all(&manifests_dir).await?;
+        fs::create_dir_all(&segments_dir).await?;
+
+        fs::write(segments_dir.join("test_asset_init.mp4"), b"init-bytes").await?;
+        fs::write(segments_dir.join("test_asset_chunk_00001.m4s"), b"segment-bytes").await?;
+
+        let manifest_path = manifests_dir.join("test_asset_replay.json");
+        let manifest = serde_json::json!({
+            "schema_version": 1,
+            "asset_name": "test_asset",
+            "init_segment": "test_asset_init.mp4",
+            "semantic_defaults": {
+                "startup_segment_count": 1,
+                "default_dependency_depth_hint": 1,
+                "default_freshness_window_ms": 1000
+            },
+            "segments": [
+                {
+                    "sequence": 1,
+                    "relative_path": "test_asset_chunk_00001.m4s",
+                    "start_time_ms": 0,
+                    "duration_ms": 1000,
+                    "size_bytes": 13,
+                    "semantic_hint": {
+                        "importance_hint": "critical",
+                        "dependency_depth_hint": 0,
+                        "independent": true,
+                        "freshness_window_ms": 1000
+                    }
+                }
+            ]
+        });
+        fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?).await?;
+        Ok(manifest_path)
+    }
+
+    #[tokio::test]
+    async fn client_server_round_trip_preserves_summary_controller() -> Result<()> {
+        let root = unique_temp_dir("summary-round-trip");
+        fs::create_dir_all(&root).await?;
+        let manifest_path = write_replay_fixture(&root).await?;
+        let replay_input = prepare_replay_input(&manifest_path).await?;
+
+        let cert_path = root.join("results/test-cert.der");
+        let report_path = root.join("results/raw/harness/test_report.json");
+        let server = Arc::new(
+            SuiteServer::bind("127.0.0.1:0".parse::<SocketAddr>()?, cert_path.clone()).await?,
+        );
+        let server_addr = server.local_addr()?;
+        let server_task: JoinHandle<Result<TransferReport>> = {
+            let server = Arc::clone(&server);
+            let report_path = report_path.clone();
+            tokio::spawn(async move { server.run_transfer(&report_path).await })
+        };
+
+        let client_summary = run_prepared(
+            ClientArgs {
+                bind: "127.0.0.1:0".parse()?,
+                server: server_addr,
+                server_name: "localhost".to_string(),
+                cert: cert_path,
+                replay_manifest: manifest_path,
+                pace: Pace::Immediate,
+                mode: ReplayMode::Live,
+                vod_deadline_slack_ms: 30_000,
+                controller: BaselineController::Bbr,
+            },
+            &replay_input,
+            server.cert_der(),
+        )
+        .await?;
+
+        let report = server_task.await??;
+        server.shutdown().await;
+
+        assert_eq!(client_summary.baseline_controller, BaselineController::Bbr);
+        assert_eq!(report.summary.baseline_controller, BaselineController::Bbr);
+        assert_eq!(client_summary.report_path, report.summary.report_path);
+
+        stdfs::remove_dir_all(&root)?;
+        Ok(())
+    }
 }

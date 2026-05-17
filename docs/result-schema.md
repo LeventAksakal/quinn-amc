@@ -1,18 +1,19 @@
-# Sprint 1 Result Schema
+# Harness Result Schema
 
-This note captures the minimum JSON contract currently emitted by the local harness path for Sprint 1 reconciliation work.
+This note captures the current JSON contract emitted by the harness for raw reports and processed outputs.
 
-The schema below is intentionally narrow. It only covers fields that are present in the current Rust producers and needed to reconcile raw and processed artifacts across Sprint 1 local runs.
+The schema below stays intentionally focused on fields that are produced by the current Rust code and matter for reconciliation, provenance, and comparison work.
 
 ## Scope
 
-Current local harness execution writes three result shapes:
+Current harness execution writes four result shapes:
 
 - raw transfer report under `results/raw/harness/*_report.json`
 - processed per-run AMC analysis under `results/processed/harness/*_amc.json`
 - processed suite summary under `results/processed/harness/*_summary.json`
+- processed suite comparison export under `results/processed/harness/*_comparison.json`
 
-The replay manifest referenced by processed outputs is an input artifact, not part of the result schema.
+The replay manifest referenced by processed outputs is still an input artifact, not itself a result artifact, but processed outputs now record input provenance for it.
 
 ## Raw transfer report
 
@@ -85,6 +86,20 @@ File shape:
     "startup_segments": 3,
     "live_freshness_window_ms": 1000
   },
+  "input_provenance": {
+    "suite_config": {
+      "path": "configs/harness/local_controller_matrix.json",
+      "sha256": "..."
+    },
+    "replay_manifest": {
+      "path": "data/processed/manifests/sintel_trailer_replay.json",
+      "sha256": "..."
+    },
+    "raw_report": {
+      "path": "results/raw/harness/live_immediate_cubic_report.json",
+      "sha256": "..."
+    }
+  },
   "aggregate": {
     "units_scored": 43,
     "media_units_scored": 42,
@@ -122,6 +137,7 @@ Minimum contract:
 
 - `controller` is copied from the harness run config and must match `summary.baseline_controller` in the raw report for the same run.
 - `network_scenario` is embedded, not referenced by name only.
+- `input_provenance` records the exact suite config, replay manifest, and raw report bytes used to generate the analysis.
 - `aggregate` is the stable comparison surface for Sprint 1 utility reconciliation.
 - `units[*].semantic_source` shows whether scoring used replay-manifest hints or harness fallback values.
 
@@ -133,6 +149,16 @@ File shape:
 {
   "suite_name": "local_live_immediate_baselines",
   "replay_manifest": "data/processed/manifests/sintel_trailer_replay.json",
+  "input_provenance": {
+    "suite_config": {
+      "path": "configs/harness/local_live_immediate_baselines.json",
+      "sha256": "..."
+    },
+    "replay_manifest": {
+      "path": "data/processed/manifests/sintel_trailer_replay.json",
+      "sha256": "..."
+    }
+  },
   "network_scenarios": [
     {
       "name": "local_loopback",
@@ -171,13 +197,25 @@ File shape:
 Minimum contract:
 
 - `runs[*].controller` is the config-declared controller for the run.
+- `input_provenance` records the exact suite config and replay manifest bytes used when the summary or comparison export was written.
 - `runs[*].report_path` and `runs[*].amc_analysis_path` are workspace-relative paths.
 - `runs[*].summary.report_path` remains the absolute raw-report path returned by the server.
 - `runs[*].summary.amc_runtime_samples`, `runs[*].summary.max_runtime_utility_score`, and `runs[*].summary.min_runtime_utility_score` mirror the raw run-time telemetry summary when AMC runtime utility is present.
 - The suite summary is the join point that links config intent, raw report location, and per-run processed analysis.
 
+## Processed suite comparison export
+
+The comparison export mirrors the suite-level provenance fields from the summary and adds matrix-group and row-oriented views for plotting and report assembly.
+
+Minimum contract:
+
+- `suite_name`, `replay_manifest`, and `input_provenance` match the corresponding suite summary.
+- `matrix_groups[*]` captures grouped controller cells, expected controllers, and missing controllers for matrix completeness checks.
+- `rows[*]` flattens per-run outcomes into a plot-friendly comparison table without dropping controller provenance.
+
 ## Reconciliation rules
 
 - For the same run, `runs[*].controller`, processed analysis `controller`, and raw `summary.baseline_controller` should agree exactly.
+- When present, processed `input_provenance` digests should match the current bytes of the referenced suite config, replay manifest, and raw report artifacts.
 - Raw reports use an absolute `report_path`; processed summaries use relative `report_path` fields for the same artifact. This is expected in the current implementation.
 - Windows can execute `local` scenarios, but `linux_tc_netem` scenarios only become runnable when the harness binary itself runs on Linux.
