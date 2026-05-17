@@ -88,6 +88,15 @@ Phase 7 resolves the report package around one versioned Markdown report plus on
 - The validated generated package layout lives under `results/reports/final/` and contains a packaged report copy, the four canonical processed artifacts, the 39 frozen figures, a manifest, and a reproducibility note.
 - Phase 7 does not widen the evidence boundary, regenerate plots, or add HTML or PDF export; later phases should inherit the Markdown-first package workflow as-is unless they explicitly reopen format scope.
 
+## Phase 8 Resolution
+
+Phase 8 resolves the live-demo around one canonical constrained-live AMC raw report rather than around the whole `results/raw/` tree.
+
+- The canonical showcase input is `results/raw/harness/live_realtime_amc_preview_lte_constrained_report.json` from the frozen fixed-preset matrix.
+- The validated demo command remains `cargo run -p harness -- live-demo --report results/raw/harness/live_realtime_amc_preview_lte_constrained_report.json --speed 1.0`.
+- The final demo stays single-run and report-backed: it visualizes the persisted observation and runtime utility telemetry without claiming deeper AMC internals than the raw artifact stores.
+- Later phases should validate this one showcase path rather than reopening report selection or widening the demo into a comparative controller lab.
+
 ## Phase Overview
 
 ### Phase 1: Define Done And Freeze Scope

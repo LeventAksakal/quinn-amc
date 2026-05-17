@@ -128,6 +128,24 @@ cargo run -p harness -- package-report --report docs/final-report.md --matrix-co
 - `results/reports/final/artifacts/*.json` for the four canonical processed artifacts
 - `results/reports/final/figures/*.svg` for the 39 frozen figures
 
+## Phase 8 Demo Contract
+
+### Canonical showcase raw report
+
+- `results/raw/harness/live_realtime_amc_preview_lte_constrained_report.json`
+
+### Canonical demo command
+
+```powershell
+cargo run -p harness -- live-demo --report results/raw/harness/live_realtime_amc_preview_lte_constrained_report.json --speed 1.0
+```
+
+### Raw-report retrieval command if the showcase file is missing locally
+
+```powershell
+gcloud compute scp quinn-amc-vps:/home/leven/quinn-amc/results/raw/harness/live_realtime_amc_preview_lte_constrained_report.json results/raw/harness/live_realtime_amc_preview_lte_constrained_report.json --zone europe-west6-c
+```
+
 ## Frozen Interpretation Summary
 
 ### Live single-flow matrix
@@ -154,5 +172,5 @@ cargo run -p harness -- package-report --report docs/final-report.md --matrix-co
 - Later figure reruns should use the canonical figure commands above and keep the suite-prefixed naming convention intact.
 - Phase 7 should build the report package around the same canonical artifacts and the same bounded claim.
 - Later report reruns should use the canonical `package-report` command above and should not substitute local parity, workflow-validation, or exploratory outputs into the package.
-- Phase 8 should choose a showcase raw report from the frozen evidence family, not from workflow-validation or exploratory outputs.
+- Phase 8 should use the canonical constrained-live AMC raw report above rather than switching to workflow-validation, exploratory, or local support-only raw reports.
 - Phase 9 should validate the final artifact set against this freeze note instead of re-deciding what counts as evidence.

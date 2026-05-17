@@ -76,6 +76,14 @@ Phase 7 turns the frozen evidence and frozen figure set into a reviewer-readable
 - the validated package command is `cargo run -p harness -- package-report`
 - the validated generated package layout under `results/reports/final/` contains `report.md`, `manifest.json`, `reproducibility.md`, the four canonical processed artifacts, and the 39 frozen figures
 
+## Phase 8 Live Demo
+
+Phase 8 freezes the ratatui introspection viewer around one canonical constrained-live AMC showcase run.
+
+- the canonical showcase raw report is `results/raw/harness/live_realtime_amc_preview_lte_constrained_report.json`
+- the validated demo command is `cargo run -p harness -- live-demo --report results/raw/harness/live_realtime_amc_preview_lte_constrained_report.json --speed 1.0`
+- the viewer now highlights current deadline status, delivery behavior, and the runtime utility telemetry already stored in the raw report
+
 ## Config Status
 
 | Status | Configs | Current role |
@@ -220,6 +228,12 @@ Frozen final-evidence report workflow:
 cargo run -p harness -- package-report --report docs/final-report.md --matrix-comparison results/processed/harness/vps_fixed_preset_controller_matrix_comparison.json --fairness-comparison results/processed/harness/vps_host_live_coexistence_bbr_guardrail_comparison.json --figure-dir results/figures/harness --output-dir results/reports/final
 ```
 
+Frozen final-evidence live-demo workflow:
+
+```powershell
+cargo run -p harness -- live-demo --report results/raw/harness/live_realtime_amc_preview_lte_constrained_report.json --speed 1.0
+```
+
 The first command is the canonical single-flow matrix path. The second command sequence is the canonical fairness guardrail path. They intentionally use different execution modes in the current repository because `run_linux_vps_suite.sh` is still single-client only.
 
 The compose VPS runner now rejects configs that contain `runs[*].coexistence` and validates the referenced replay manifest before launching any container work. That preflight checks the manifest file itself, the init segment, every referenced media segment, each declared `size_bytes`, and whether the manifest is stale relative to any referenced segment payload.
@@ -276,6 +290,7 @@ Expected VPS outputs:
 - `results/processed/harness/*_comparison.json`
 - `results/figures/harness/*.svg` after plotting the two canonical comparison exports, including suite-aware files such as `vps_fixed_preset_controller_matrix_overview_throughput_mbps.svg` and `vps_host_live_coexistence_bbr_guardrail_live_realtime_fairness_jain_index.svg`
 - `results/reports/final/` after `package-report`, including `report.md`, `manifest.json`, `reproducibility.md`, `artifacts/*.json`, and `figures/*.svg`
+- `results/raw/harness/live_realtime_amc_preview_lte_constrained_report.json` as the canonical Phase 8 showcase raw report for `live-demo`
 
 Fairness and coexistence runs are a separate experiment family. The harness now supports an optional concurrent competitor flow per run and records the competitor report plus fairness metrics in the suite summary and comparison export. A practical local smoke config is `configs/harness/local_live_immediate_amc_bbr_coexistence.json`.
 Fairness and coexistence are mandatory final evidence for the repository, but the currently canonical VPS path is `configs/harness/vps_host_live_coexistence_bbr_guardrail.json`. The legacy docker-runner-oriented `configs/harness/vps_live_coexistence_bbr_guardrail.json` remains non-canonical and unsupported under the current runner until the host-veth path can launch both foreground and competitor clients in one suite.
@@ -304,6 +319,7 @@ See the project notes under `docs/`:
 - [docs/evidence-freeze.md](docs/evidence-freeze.md) for the frozen Phase 5 artifact inventory and reproduction contract
 - [docs/evaluation.md](docs/evaluation.md) for benchmark questions and metrics
 - [docs/final-report.md](docs/final-report.md) for the final reviewer-readable report bound to the frozen evidence set
+- [docs/live-demo.md](docs/live-demo.md) for the canonical Phase 8 showcase run and operator guide
 - [docs/methodology.md](docs/methodology.md) for the consolidated experiment plan
 
 ## Data pipeline
