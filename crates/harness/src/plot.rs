@@ -122,7 +122,11 @@ fn render_overview_charts(
         }
 
         let file_name = overview_file_name(export, metric.file_stem);
-        let title = format!("{} Overview: {}", suite_title(&export.suite_name), metric.title);
+        let title = format!(
+            "{} Overview: {}",
+            suite_title(&export.suite_name),
+            metric.title
+        );
         outputs.push(render_metric_chart(
             output_dir,
             &file_name,

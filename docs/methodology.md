@@ -91,6 +91,14 @@ Phase 8 binds the final ratatui demo to one frozen raw report instead of treatin
 - the viewer remains single-run and report-backed: it visualizes current observation state, deadline status, delivery latency, age of information, and the persisted runtime utility telemetry fields already present in the raw artifact
 - if the canonical raw report is missing locally, Phase 8 should retrieve that exact file from the VPS evidence path rather than silently substituting a local support-only report
 
+## Phase 9 Release Gate
+
+Phase 9 validates the repository as a finished AMC v1 artifact without reopening the frozen evidence boundary.
+
+- the final local release-gate checks are `cargo check`, `cargo test`, `cargo run -p harness -- run-suite --config configs/harness/local_controller_matrix.json`, the two canonical `plot-suite` commands, canonical `package-report`, and canonical `live-demo`
+- the local `run-suite` command is used only as a closeout execution-path check; the authoritative evidence family remains the frozen VPS matrix plus host fairness guardrail documented elsewhere in this note
+- the packaged final deliverable under `results/reports/final/` remains the closeout archive surface and was revalidated at `39` figures plus `4` packaged processed artifacts
+
 ## Workload model
 
 The implementation should stay trace-driven. Use `ffmpeg` and `ffprobe` offline to turn open source clips into replayable segment sets and timing manifests rather than embedding a full player or media pipeline in the Quinn client.
@@ -346,5 +354,7 @@ The final report package should bind the frozen configs, exact reproduction comm
 The validated Phase 7 deliverables are the versioned report in `docs/final-report.md` and the generated package assembled by `package-report`.
 
 The validated Phase 8 deliverables are the single-run live demo bound to the canonical constrained-live AMC raw report and the operator guide in `docs/live-demo.md`.
+
+The validated Phase 9 deliverables are the refreshed package under `results/reports/final/`, the passing local release-gate command set, and the explicit future-work boundary for anything beyond AMC v1 repository completion.
 
 The frozen evidence inventory and include/exclude rules for that package are recorded in [docs/evidence-freeze.md](docs/evidence-freeze.md).

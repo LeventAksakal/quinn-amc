@@ -97,6 +97,15 @@ Phase 8 resolves the live-demo around one canonical constrained-live AMC raw rep
 - The final demo stays single-run and report-backed: it visualizes the persisted observation and runtime utility telemetry without claiming deeper AMC internals than the raw artifact stores.
 - Later phases should validate this one showcase path rather than reopening report selection or widening the demo into a comparative controller lab.
 
+## Phase 9 Resolution
+
+Phase 9 resolves the repository closeout as a validation gate rather than a new feature phase.
+
+- The final local release-gate checks now pass: `cargo check`, `cargo test`, canonical figure regeneration, canonical `package-report`, and canonical `live-demo` launch against `results/raw/harness/live_realtime_amc_preview_lte_constrained_report.json`.
+- The benchmark execution path was revalidated locally with `cargo run -p harness -- run-suite --config configs/harness/local_controller_matrix.json`, while the canonical VPS evidence commands remain frozen as the authoritative reproduction path rather than being rerun during closeout.
+- The packaged final deliverable under `results/reports/final/` was refreshed and revalidated with `39` figures, `4` packaged processed artifacts, `report.md`, `manifest.json`, and `reproducibility.md`.
+- Repository completion now stops cleanly at the AMC v1 artifact boundary; future work remains explicit rather than hiding inside the closeout phase.
+
 ## Phase Overview
 
 ### Phase 1: Define Done And Freeze Scope

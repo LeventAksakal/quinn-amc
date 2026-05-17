@@ -84,6 +84,14 @@ Phase 8 freezes the ratatui introspection viewer around one canonical constraine
 - the validated demo command is `cargo run -p harness -- live-demo --report results/raw/harness/live_realtime_amc_preview_lte_constrained_report.json --speed 1.0`
 - the viewer now highlights current deadline status, delivery behavior, and the runtime utility telemetry already stored in the raw report
 
+## Phase 9 Release Gate
+
+Phase 9 closes the repository as a finished AMC v1 artifact.
+
+- the final local release-gate checks are `cargo check`, `cargo test`, `cargo run -p harness -- run-suite --config configs/harness/local_controller_matrix.json`, the two canonical `plot-suite` commands, canonical `package-report`, and canonical `live-demo`
+- the canonical VPS evidence workflow remains frozen as the authoritative reproduction path; Phase 9 revalidates the local code and packaging paths without reopening or rerunning the frozen remote evidence set
+- the validated packaged artifact layout under `results/reports/final/` contains `report.md`, `manifest.json`, `reproducibility.md`, `4` packaged processed artifacts, and `39` frozen figures
+
 ## Config Status
 
 | Status | Configs | Current role |
@@ -231,6 +239,18 @@ cargo run -p harness -- package-report --report docs/final-report.md --matrix-co
 Frozen final-evidence live-demo workflow:
 
 ```powershell
+cargo run -p harness -- live-demo --report results/raw/harness/live_realtime_amc_preview_lte_constrained_report.json --speed 1.0
+```
+
+Frozen final local release-gate workflow:
+
+```powershell
+cargo check
+cargo test
+cargo run -p harness -- run-suite --config configs/harness/local_controller_matrix.json
+cargo run -p harness -- plot-suite --comparison results/processed/harness/vps_fixed_preset_controller_matrix_comparison.json --output-dir results/figures/harness
+cargo run -p harness -- plot-suite --comparison results/processed/harness/vps_host_live_coexistence_bbr_guardrail_comparison.json --output-dir results/figures/harness
+cargo run -p harness -- package-report --report docs/final-report.md --matrix-comparison results/processed/harness/vps_fixed_preset_controller_matrix_comparison.json --fairness-comparison results/processed/harness/vps_host_live_coexistence_bbr_guardrail_comparison.json --figure-dir results/figures/harness --output-dir results/reports/final
 cargo run -p harness -- live-demo --report results/raw/harness/live_realtime_amc_preview_lte_constrained_report.json --speed 1.0
 ```
 

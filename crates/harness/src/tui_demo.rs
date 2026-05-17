@@ -86,7 +86,14 @@ fn run_app(
                 .split(areas[1]);
             frame.render_widget(summary_panel(report, current, &report_file), top[0]);
             frame.render_widget(
-                status_panel(report, current, canonical_showcase, step, total_steps, elapsed_ms),
+                status_panel(
+                    report,
+                    current,
+                    canonical_showcase,
+                    step,
+                    total_steps,
+                    elapsed_ms,
+                ),
                 top[1],
             );
 
@@ -195,7 +202,10 @@ fn summary_panel(
             label_span("mode "),
             Span::raw(current.map(observation_mode_label).unwrap_or("unknown")),
         ]),
-        Line::from(vec![label_span("report "), Span::raw(report_file.to_string())]),
+        Line::from(vec![
+            label_span("report "),
+            Span::raw(report_file.to_string()),
+        ]),
         Line::from(vec![
             label_span("media "),
             Span::raw(format!(
@@ -221,7 +231,10 @@ fn summary_panel(
             )),
             Span::raw("  "),
             label_span("payload "),
-            Span::raw(format!("{:.2} MiB", bytes_to_mib(report.summary.total_payload_bytes))),
+            Span::raw(format!(
+                "{:.2} MiB",
+                bytes_to_mib(report.summary.total_payload_bytes)
+            )),
         ]),
         Line::from(vec![
             label_span("utility samples "),
@@ -256,7 +269,9 @@ fn status_panel(
         .unwrap_or(("n/a".to_string(), Color::DarkGray));
     let current_latency = current.map(delivery_latency_ms).unwrap_or_default();
     let current_age = current.map(age_of_information_ms).unwrap_or_default();
-    let current_useful = current.map(|observation| observation.useful).unwrap_or(false);
+    let current_useful = current
+        .map(|observation| observation.useful)
+        .unwrap_or(false);
 
     Paragraph::new(vec![
         Line::from(vec![
@@ -273,8 +288,16 @@ fn status_panel(
         Line::from(vec![
             label_span("current usefulness "),
             Span::styled(
-                if current_useful { "useful" } else { "late / useless" },
-                Style::default().fg(if current_useful { Color::Green } else { Color::Red }),
+                if current_useful {
+                    "useful"
+                } else {
+                    "late / useless"
+                },
+                Style::default().fg(if current_useful {
+                    Color::Green
+                } else {
+                    Color::Red
+                }),
             ),
         ]),
         Line::from(vec![
@@ -296,7 +319,11 @@ fn status_panel(
             Span::raw(report.summary.report_path.clone()),
         ]),
     ])
-    .block(Block::default().title("Showcase Status").borders(Borders::ALL))
+    .block(
+        Block::default()
+            .title("Showcase Status")
+            .borders(Borders::ALL),
+    )
 }
 
 fn current_observation_panel(current: Option<&SegmentObservation>) -> Paragraph<'static> {
@@ -463,7 +490,10 @@ fn deadline_status(lateness_ms: i64) -> (String, Color) {
     if lateness_ms > 0 {
         (format!("late by {} ms", lateness_ms), Color::Red)
     } else {
-        (format!("on time by {} ms", lateness_ms.unsigned_abs()), Color::Green)
+        (
+            format!("on time by {} ms", lateness_ms.unsigned_abs()),
+            Color::Green,
+        )
     }
 }
 
@@ -512,7 +542,10 @@ mod tests {
 
     #[test]
     fn canonical_showcase_detection_matches_expected_report_name() {
-        let report = sample_report(&format!("results/raw/harness/{}", CANONICAL_SHOWCASE_REPORT));
+        let report = sample_report(&format!(
+            "results/raw/harness/{}",
+            CANONICAL_SHOWCASE_REPORT
+        ));
         assert!(is_canonical_showcase(&report));
     }
 

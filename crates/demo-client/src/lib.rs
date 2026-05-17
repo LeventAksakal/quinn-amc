@@ -738,7 +738,10 @@ async fn inspect_replay_input_impl(path: &Path) -> Result<ReplayInspection> {
         ));
     }
     if init_metadata.len() == 0 {
-        return Err(anyhow!("init segment is empty: {}", init_segment_path.display()));
+        return Err(anyhow!(
+            "init segment is empty: {}",
+            init_segment_path.display()
+        ));
     }
 
     let mut seen_sequences = HashSet::with_capacity(manifest.segments.len());
@@ -848,7 +851,9 @@ fn validate_replay_input(manifest: &ReplayManifest) -> Result<()> {
 }
 
 fn replay_manifest_schema_version(manifest: &ReplayManifest) -> Result<u32> {
-    let schema_version = manifest.schema_version.unwrap_or(REPLAY_MANIFEST_SCHEMA_VERSION);
+    let schema_version = manifest
+        .schema_version
+        .unwrap_or(REPLAY_MANIFEST_SCHEMA_VERSION);
     if schema_version != REPLAY_MANIFEST_SCHEMA_VERSION {
         return Err(anyhow!(
             "unsupported replay manifest schema_version {} (expected {})",
@@ -1221,7 +1226,11 @@ mod tests {
     use super::inspect_replay_input;
     use anyhow::Result;
     use serde_json::json;
-    use std::{env, fs as stdfs, path::PathBuf, time::{Duration, SystemTime, UNIX_EPOCH}};
+    use std::{
+        env, fs as stdfs,
+        path::PathBuf,
+        time::{Duration, SystemTime, UNIX_EPOCH},
+    };
     use tokio::fs;
 
     fn unique_temp_dir(label: &str) -> PathBuf {
@@ -1239,7 +1248,11 @@ mod tests {
         fs::create_dir_all(&segments_dir).await?;
 
         fs::write(segments_dir.join("test_asset_init.mp4"), b"init-bytes").await?;
-        fs::write(segments_dir.join("test_asset_chunk_00001.m4s"), b"segment-bytes").await?;
+        fs::write(
+            segments_dir.join("test_asset_chunk_00001.m4s"),
+            b"segment-bytes",
+        )
+        .await?;
 
         let manifest_path = manifests_dir.join("test_asset_replay.json");
         let manifest = json!({
@@ -1278,9 +1291,7 @@ mod tests {
         let manifest_path = write_replay_fixture(&root, 999).await?;
 
         let error = inspect_replay_input(&manifest_path).await.unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("segment payload size mismatch"));
+        assert!(error.to_string().contains("segment payload size mismatch"));
 
         stdfs::remove_dir_all(&root)?;
         Ok(())
@@ -1293,8 +1304,8 @@ mod tests {
         let manifest_path = write_replay_fixture(&root, b"segment-bytes".len() as u64).await?;
 
         tokio::time::sleep(Duration::from_millis(1100)).await;
-        let segment_path = root
-            .join("data/processed/segments/test_asset/test_asset_chunk_00001.m4s");
+        let segment_path =
+            root.join("data/processed/segments/test_asset/test_asset_chunk_00001.m4s");
         fs::write(&segment_path, b"segment-bytes").await?;
 
         let error = inspect_replay_input(&manifest_path).await.unwrap_err();

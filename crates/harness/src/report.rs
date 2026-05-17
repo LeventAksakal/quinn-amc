@@ -367,7 +367,10 @@ fn expected_grouped_figures(
         .collect()
 }
 
-async fn validate_expected_figures(figure_dir: &Path, expected_figures: &[ExpectedFigure]) -> Result<()> {
+async fn validate_expected_figures(
+    figure_dir: &Path,
+    expected_figures: &[ExpectedFigure],
+) -> Result<()> {
     let mut seen = HashSet::new();
     for figure in expected_figures {
         ensure!(
@@ -403,15 +406,13 @@ async fn copy_file(source_path: &Path, target_path: &Path) -> Result<()> {
             .await
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
-    fs::copy(source_path, target_path)
-        .await
-        .with_context(|| {
-            format!(
-                "failed to copy {} to {}",
-                source_path.display(),
-                target_path.display()
-            )
-        })?;
+    fs::copy(source_path, target_path).await.with_context(|| {
+        format!(
+            "failed to copy {} to {}",
+            source_path.display(),
+            target_path.display()
+        )
+    })?;
     Ok(())
 }
 
@@ -430,7 +431,12 @@ async fn ensure_file_exists(path: &Path, label: &str) -> Result<()> {
     let metadata = fs::metadata(path)
         .await
         .with_context(|| format!("missing {} at {}", label, path.display()))?;
-    ensure!(metadata.is_file(), "{} at {} is not a file", label, path.display());
+    ensure!(
+        metadata.is_file(),
+        "{} at {} is not a file",
+        label,
+        path.display()
+    );
     Ok(())
 }
 
@@ -438,7 +444,12 @@ async fn ensure_dir_exists(path: &Path, label: &str) -> Result<()> {
     let metadata = fs::metadata(path)
         .await
         .with_context(|| format!("missing {} at {}", label, path.display()))?;
-    ensure!(metadata.is_dir(), "{} at {} is not a directory", label, path.display());
+    ensure!(
+        metadata.is_dir(),
+        "{} at {} is not a directory",
+        label,
+        path.display()
+    );
     Ok(())
 }
 
@@ -478,8 +489,7 @@ fn build_reproducibility_note(suites: &[PackagedSuiteInput], figure_count: usize
 
     format!(
         "# Reproducibility\n\nThis package was assembled from the frozen Phase 5 and Phase 6 artifacts only.\n\n## Canonical suites\n{suite_names}\n\n## Canonical VPS commands\n\n```bash\ncd /home/leven/quinn-amc\nsudo bash scripts/experiments/run_linux_vps_suite.sh configs/harness/vps_fixed_preset_controller_matrix.json\nsource \"$HOME/.cargo/env\"\ncargo build -p harness\nsudo ./target/debug/harness run-suite --config configs/harness/vps_host_live_coexistence_bbr_guardrail.json\nsudo chown -R \"$USER\":\"$USER\" results\n```\n\n## Canonical figure commands\n\n```powershell\ncargo run -p harness -- plot-suite --comparison results/processed/harness/vps_fixed_preset_controller_matrix_comparison.json --output-dir results/figures/harness\ncargo run -p harness -- plot-suite --comparison results/processed/harness/vps_host_live_coexistence_bbr_guardrail_comparison.json --output-dir results/figures/harness\n```\n\n## Package validation\n\n- expected figure count: `{figure_count}`\n- accepted evidence families: `{}` and `{}`\n- excluded evidence families remain outside this package even if they exist elsewhere under `results/`\n",
-        MATRIX_SUITE_NAME,
-        FAIRNESS_SUITE_NAME,
+        MATRIX_SUITE_NAME, FAIRNESS_SUITE_NAME,
     )
 }
 
@@ -528,6 +538,9 @@ mod tests {
             "results/processed/harness/vps_fixed_preset_controller_matrix_comparison.json",
         ))
         .expect("summary path");
-        assert_eq!(summary.file_name().and_then(|name| name.to_str()), Some("vps_fixed_preset_controller_matrix_summary.json"));
+        assert_eq!(
+            summary.file_name().and_then(|name| name.to_str()),
+            Some("vps_fixed_preset_controller_matrix_summary.json")
+        );
     }
 }

@@ -14,9 +14,9 @@ use std::{
 
 use analysis::{
     ArtifactProvenance, CoexistenceOutcome, RunInputProvenance, RunOutcome, SkippedRun,
-    SuiteInputProvenance, SuiteSummary, analyze_report,
-    build_suite_comparison_export, compute_fairness_metrics, load_replay_manifest,
-    load_transfer_report, write_amc_analysis, write_comparison_export,
+    SuiteInputProvenance, SuiteSummary, analyze_report, build_suite_comparison_export,
+    compute_fairness_metrics, load_replay_manifest, load_transfer_report, write_amc_analysis,
+    write_comparison_export,
 };
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
@@ -185,13 +185,13 @@ async fn run_local_suite(
         let amc_analysis_path = amc_output_path(workspace_root, config, &run.name);
         let coexistence_report_path = coexistence_report_output_path(workspace_root, config, run);
         let coexistence_amc_path = coexistence_amc_output_path(workspace_root, config, run);
-        let report_is_reusable =
-            report_is_fresh(&absolute_report_path, &replay_dependency_paths).await?
-                && if run.coexistence.is_some() {
-                    report_is_fresh(&coexistence_report_path, &replay_dependency_paths).await?
-                } else {
-                    true
-                };
+        let report_is_reusable = report_is_fresh(&absolute_report_path, &replay_dependency_paths)
+            .await?
+            && if run.coexistence.is_some() {
+                report_is_fresh(&coexistence_report_path, &replay_dependency_paths).await?
+            } else {
+                true
+            };
         let (transfer_report, coexistence_report) = if report_is_reusable {
             info!(run = %run.name, report = %path_relative_to(workspace_root, &absolute_report_path), "skipping transport because raw report is fresh");
             (
@@ -315,8 +315,12 @@ async fn run_local_suite(
             &transfer_report,
         );
         amc_analysis.input_provenance = Some(
-            run_input_provenance(workspace_root, &suite_input_provenance, &absolute_report_path)
-                .await?,
+            run_input_provenance(
+                workspace_root,
+                &suite_input_provenance,
+                &absolute_report_path,
+            )
+            .await?,
         );
         write_amc_analysis(&amc_analysis_path, &amc_analysis).await?;
 
@@ -402,7 +406,8 @@ async fn analyze_existing_suite(
 ) -> Result<PathBuf> {
     let replay_manifest_path = resolve_path(workspace_root, &config.replay_manifest);
     let replay_inventory = inspect_replay_input(&replay_manifest_path).await?;
-    let _replay_dependency_paths = replay_dependency_paths(&replay_manifest_path, &replay_inventory);
+    let _replay_dependency_paths =
+        replay_dependency_paths(&replay_manifest_path, &replay_inventory);
     let replay_manifest = load_replay_manifest(&replay_manifest_path).await?;
     let suite_input_provenance =
         suite_input_provenance(workspace_root, config_path, &replay_manifest_path).await?;
@@ -474,8 +479,12 @@ async fn analyze_existing_suite(
             &transfer_report,
         );
         amc_analysis.input_provenance = Some(
-            run_input_provenance(workspace_root, &suite_input_provenance, &absolute_report_path)
-                .await?,
+            run_input_provenance(
+                workspace_root,
+                &suite_input_provenance,
+                &absolute_report_path,
+            )
+            .await?,
         );
         write_amc_analysis(&amc_analysis_path, &amc_analysis).await?;
 
@@ -1023,8 +1032,15 @@ fn hex_digest(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
     use anyhow::Result;
-    use demo_client::{Args as ClientArgs, BaselineController, Pace, ReplayMode, prepare_replay_input, run_prepared};
-    use std::{env, fs as stdfs, sync::Arc, time::{SystemTime, UNIX_EPOCH}};
+    use demo_client::{
+        Args as ClientArgs, BaselineController, Pace, ReplayMode, prepare_replay_input,
+        run_prepared,
+    };
+    use std::{
+        env, fs as stdfs,
+        sync::Arc,
+        time::{SystemTime, UNIX_EPOCH},
+    };
     use tokio::{fs, task::JoinHandle};
 
     fn unique_temp_dir(label: &str) -> PathBuf {
@@ -1042,7 +1058,11 @@ mod tests {
         fs::create_dir_all(&segments_dir).await?;
 
         fs::write(segments_dir.join("test_asset_init.mp4"), b"init-bytes").await?;
-        fs::write(segments_dir.join("test_asset_chunk_00001.m4s"), b"segment-bytes").await?;
+        fs::write(
+            segments_dir.join("test_asset_chunk_00001.m4s"),
+            b"segment-bytes",
+        )
+        .await?;
 
         let manifest_path = manifests_dir.join("test_asset_replay.json");
         let manifest = serde_json::json!({
