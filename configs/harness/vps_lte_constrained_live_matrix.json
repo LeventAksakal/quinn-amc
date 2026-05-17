@@ -1,0 +1,72 @@
+{
+  "suite_name": "vps_lte_constrained_live_matrix",
+  "host": "demo-server",
+  "base_port": 5001,
+  "cert_path": "results/demo-cert.der",
+  "replay_manifest": "data/processed/manifests/sintel_trailer_replay.json",
+  "server_startup_delay_ms": 500,
+  "results_root": "results",
+  "network_scenarios": [
+    {
+      "name": "lte_constrained",
+      "kind": "linux_tc_netem",
+      "description": "Focused constrained LTE live matrix for runner diagnostics and controller recovery.",
+      "rtt_ms": 110,
+      "loss_percent": 1.5,
+      "bandwidth_mbps": 8,
+      "tc_netem_enabled": true,
+      "tc_netem": {
+        "interface": "server-container-host-veth",
+        "delay_jitter_ms": 20,
+        "limit_packets": 128,
+        "rate_burst_kbit": 192,
+        "rate_latency_ms": 65
+      },
+      "notes": "Matches the primary fixed-preset constrained LTE cell exactly so targeted reruns stay comparable."
+    }
+  ],
+  "semantic_profile": {
+    "startup_segments": 3,
+    "startup_importance": "critical",
+    "vod_steady_importance": "normal",
+    "live_steady_importance": "high",
+    "independent_segment_interval": 4,
+    "dependent_depth": 1,
+    "vod_freshness_window_ms": 30000,
+    "live_freshness_window_ms": 1000
+  },
+  "runs": [
+    {
+      "name": "live_realtime_new_reno_lte_constrained",
+      "controller": "new_reno",
+      "mode": "live",
+      "pace": "realtime",
+      "network_scenario": "lte_constrained",
+      "vod_deadline_slack_ms": 30000
+    },
+    {
+      "name": "live_realtime_cubic_lte_constrained",
+      "controller": "cubic",
+      "mode": "live",
+      "pace": "realtime",
+      "network_scenario": "lte_constrained",
+      "vod_deadline_slack_ms": 30000
+    },
+    {
+      "name": "live_realtime_bbr_lte_constrained",
+      "controller": "bbr",
+      "mode": "live",
+      "pace": "realtime",
+      "network_scenario": "lte_constrained",
+      "vod_deadline_slack_ms": 30000
+    },
+    {
+      "name": "live_realtime_amc_preview_lte_constrained",
+      "controller": "amc_preview",
+      "mode": "live",
+      "pace": "realtime",
+      "network_scenario": "lte_constrained",
+      "vod_deadline_slack_ms": 30000
+    }
+  ]
+}

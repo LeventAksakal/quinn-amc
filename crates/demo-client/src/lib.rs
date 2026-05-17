@@ -8,7 +8,7 @@ use std::{
 
 use amc_core::{
     AmcControllerConfig, DefaultUtilityScorer, Importance, MediaSemantics, RuntimeUtilityState,
-    TrafficClass, UtilityInputs,
+    TrafficClass, UtilityInputs, UtilityScorer,
 };
 use anyhow::{Context, Result, anyhow};
 use clap::{Parser, ValueEnum};
@@ -278,39 +278,15 @@ pub async fn run_prepared(
     .await?;
 
     let replay_start = Instant::now();
-    for segment in &replay_input.segments {
-        if matches!(args.pace, Pace::Realtime) {
-            let deadline = tokio::time::Instant::from_std(
-                replay_start + Duration::from_millis(segment.start_time_ms),
-            );
-            sleep_until(deadline).await;
-        }
-
-        send_segment(
-            &connection,
-            &mut send,
-            &replay_input.asset_name,
-            args.controller,
-            args.mode,
-            SegmentKind::Media,
-            segment.sequence,
-            segment.start_time_ms,
-            segment.duration_ms,
-            compute_deadline_ms(
-                args.mode,
-                segment.start_time_ms,
-                segment.duration_ms,
-                args.vod_deadline_slack_ms,
-            ),
-            replay_start.elapsed().as_millis() as u64,
-            &segment.payload,
-            &segment.relative_path,
-            &replay_input.semantic_defaults,
-            segment.semantic_hint.as_ref(),
-            runtime_utility.as_ref(),
-        )
-        .await?;
-    }
+    send_media_segments(
+        &connection,
+        &mut send,
+        replay_input,
+        &args,
+        replay_start,
+        runtime_utility.as_ref(),
+    )
+    .await?;
 
     send.finish().context("failed to finish request stream")?;
 
@@ -338,6 +314,253 @@ pub async fn run_prepared(
     connection.close(0u32.into(), b"transfer complete");
     endpoint.wait_idle().await;
     Ok(response)
+}
+
+async fn send_media_segments(
+    connection: &quinn::Connection,
+    send: &mut quinn::SendStream,
+    replay_input: &PreparedReplayInput,
+    args: &Args,
+    replay_start: Instant,
+    runtime_utility: &RuntimeUtilityState,
+) -> Result<()> {
+    if use_amc_live_scheduler(args) {
+        send_media_segments_with_amc_scheduler(
+            connection,
+            send,
+            replay_input,
+            args,
+            replay_start,
+            runtime_utility,
+        )
+        .await
+    } else {
+        send_media_segments_in_manifest_order(
+            connection,
+            send,
+            replay_input,
+            args,
+            replay_start,
+            runtime_utility,
+        )
+        .await
+    }
+}
+
+async fn send_media_segments_in_manifest_order(
+    connection: &quinn::Connection,
+    send: &mut quinn::SendStream,
+    replay_input: &PreparedReplayInput,
+    args: &Args,
+    replay_start: Instant,
+    runtime_utility: &RuntimeUtilityState,
+) -> Result<()> {
+    for segment in &replay_input.segments {
+        if matches!(args.pace, Pace::Realtime) {
+            let release = tokio::time::Instant::from_std(
+                replay_start + Duration::from_millis(segment.start_time_ms),
+            );
+            sleep_until(release).await;
+        }
+
+        send_prepared_segment(
+            connection,
+            send,
+            replay_input,
+            args,
+            replay_start,
+            segment,
+            runtime_utility,
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
+async fn send_media_segments_with_amc_scheduler(
+    connection: &quinn::Connection,
+    send: &mut quinn::SendStream,
+    replay_input: &PreparedReplayInput,
+    args: &Args,
+    replay_start: Instant,
+    runtime_utility: &RuntimeUtilityState,
+) -> Result<()> {
+    let mut next_release_index = 0usize;
+    let mut ready_indices = Vec::new();
+
+    while next_release_index < replay_input.segments.len() || !ready_indices.is_empty() {
+        let client_send_elapsed_ms = replay_start.elapsed().as_millis() as u64;
+
+        while next_release_index < replay_input.segments.len()
+            && replay_input.segments[next_release_index].start_time_ms <= client_send_elapsed_ms
+        {
+            ready_indices.push(next_release_index);
+            next_release_index += 1;
+        }
+
+        if ready_indices.is_empty() {
+            let next_segment = &replay_input.segments[next_release_index];
+            let release = tokio::time::Instant::from_std(
+                replay_start + Duration::from_millis(next_segment.start_time_ms),
+            );
+            sleep_until(release).await;
+            continue;
+        }
+
+        let ready_position = select_amc_ready_segment_position(
+            connection,
+            replay_input,
+            args,
+            &ready_indices,
+            client_send_elapsed_ms,
+        );
+        let segment_index = ready_indices.remove(ready_position);
+        let segment = &replay_input.segments[segment_index];
+
+        send_prepared_segment(
+            connection,
+            send,
+            replay_input,
+            args,
+            replay_start,
+            segment,
+            runtime_utility,
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
+async fn send_prepared_segment(
+    connection: &quinn::Connection,
+    send: &mut quinn::SendStream,
+    replay_input: &PreparedReplayInput,
+    args: &Args,
+    replay_start: Instant,
+    segment: &PreparedReplaySegment,
+    runtime_utility: &RuntimeUtilityState,
+) -> Result<()> {
+    send_segment(
+        connection,
+        send,
+        &replay_input.asset_name,
+        args.controller,
+        args.mode,
+        SegmentKind::Media,
+        segment.sequence,
+        segment.start_time_ms,
+        segment.duration_ms,
+        compute_deadline_ms(
+            args.mode,
+            segment.start_time_ms,
+            segment.duration_ms,
+            args.vod_deadline_slack_ms,
+        ),
+        replay_start.elapsed().as_millis() as u64,
+        &segment.payload,
+        &segment.relative_path,
+        &replay_input.semantic_defaults,
+        segment.semantic_hint.as_ref(),
+        runtime_utility,
+    )
+    .await
+}
+
+fn use_amc_live_scheduler(args: &Args) -> bool {
+    matches!(args.controller, BaselineController::AmcPreview)
+        && matches!(args.mode, ReplayMode::Live)
+        && matches!(args.pace, Pace::Realtime)
+}
+
+fn select_amc_ready_segment_position(
+    connection: &quinn::Connection,
+    replay_input: &PreparedReplayInput,
+    args: &Args,
+    ready_indices: &[usize],
+    client_send_elapsed_ms: u64,
+) -> usize {
+    ready_indices
+        .iter()
+        .enumerate()
+        .max_by(|(_, left_index), (_, right_index)| {
+            let left_segment = &replay_input.segments[**left_index];
+            let right_segment = &replay_input.segments[**right_index];
+            let left_score = score_ready_segment(
+                connection,
+                &replay_input.semantic_defaults,
+                args,
+                left_segment,
+                client_send_elapsed_ms,
+            );
+            let right_score = score_ready_segment(
+                connection,
+                &replay_input.semantic_defaults,
+                args,
+                right_segment,
+                client_send_elapsed_ms,
+            );
+
+            left_score
+                .total_cmp(&right_score)
+                .then_with(|| right_segment.start_time_ms.cmp(&left_segment.start_time_ms))
+                .then_with(|| right_segment.sequence.cmp(&left_segment.sequence))
+        })
+        .map(|(position, _)| position)
+        .unwrap_or(0)
+}
+
+fn score_ready_segment(
+    connection: &quinn::Connection,
+    semantic_defaults: &ReplaySemanticDefaults,
+    args: &Args,
+    segment: &PreparedReplaySegment,
+    client_send_elapsed_ms: u64,
+) -> f64 {
+    let profile = derive_runtime_utility_profile(
+        args.mode,
+        SegmentKind::Media,
+        segment.sequence,
+        semantic_defaults,
+        segment.semantic_hint.as_ref(),
+    );
+    let traffic_class = match args.mode {
+        ReplayMode::Vod => TrafficClass::Vod,
+        ReplayMode::Live => TrafficClass::Live,
+    };
+    let queue_delay_ms = client_send_elapsed_ms.saturating_sub(segment.start_time_ms);
+    let deadline_ms = compute_deadline_ms(
+        args.mode,
+        segment.start_time_ms,
+        segment.duration_ms,
+        args.vod_deadline_slack_ms,
+    );
+    let deadline_budget_ms = deadline_ms
+        .saturating_sub(segment.start_time_ms)
+        .max(segment.duration_ms);
+    let freshness_window_ms = profile.freshness_window_ms.unwrap_or(match args.mode {
+        ReplayMode::Vod => deadline_budget_ms,
+        ReplayMode::Live => segment.duration_ms.max(1),
+    });
+    let dependency_ready = derive_dependency_ready(profile, queue_delay_ms, freshness_window_ms);
+    let semantics = MediaSemantics::new(
+        traffic_class,
+        profile.importance,
+        segment.payload.len() as u64,
+    )
+    .with_dependency_depth(profile.dependency_depth)
+    .with_delivery_deadline(Duration::from_millis(deadline_budget_ms))
+    .with_freshness_window(Duration::from_millis(freshness_window_ms));
+
+    DefaultUtilityScorer
+        .score(&UtilityInputs {
+            semantics,
+            queue_delay: Duration::from_millis(queue_delay_ms),
+            estimated_rtt: connection.rtt(),
+            dependency_ready,
+        })
+        .0
 }
 
 async fn send_segment(
@@ -391,11 +614,11 @@ async fn send_segment(
     let header_bytes = bincode::serde::encode_to_vec(&header, bincode::config::standard())
         .context("failed to encode segment header")?;
     let header_len = u32::try_from(header_bytes.len()).context("segment header too large")?;
+    let mut wire_header = Vec::with_capacity(4 + header_bytes.len());
+    wire_header.extend_from_slice(&header_len.to_be_bytes());
+    wire_header.extend_from_slice(&header_bytes);
 
-    send.write_all(&header_len.to_be_bytes())
-        .await
-        .context("failed to write header length")?;
-    send.write_all(&header_bytes)
+    send.write_all(&wire_header)
         .await
         .context("failed to write header")?;
     send.write_all(&payload)

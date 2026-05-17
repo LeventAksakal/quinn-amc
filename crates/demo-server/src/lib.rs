@@ -201,14 +201,7 @@ impl SuiteServer {
 
         info!(remote = %remote, "connection established");
 
-        process_transfer(
-            &self.bind,
-            &self.cert_out,
-            report_out,
-            remote,
-            connection,
-        )
-        .await
+        process_transfer(&self.bind, &self.cert_out, report_out, remote, connection).await
     }
 
     pub async fn shutdown(&self) {
@@ -265,11 +258,9 @@ async fn process_transfer(
         recv.read_exact(&mut header_bytes)
             .await
             .context("failed to read segment header")?;
-        let (header, _): (SegmentHeader, usize) = bincode::serde::decode_from_slice(
-            &header_bytes,
-            bincode::config::standard(),
-        )
-        .context("failed to decode segment header")?;
+        let (header, _): (SegmentHeader, usize) =
+            bincode::serde::decode_from_slice(&header_bytes, bincode::config::standard())
+                .context("failed to decode segment header")?;
 
         if let Some(current_controller) = baseline_controller {
             if current_controller != header.baseline_controller {
@@ -501,7 +492,11 @@ fn build_report_metadata(
                 "observations".to_string(),
             ],
         }),
-        transfer_id: Some(build_transfer_id(remote, transfer_started_at_unix_ms, process_id)),
+        transfer_id: Some(build_transfer_id(
+            remote,
+            transfer_started_at_unix_ms,
+            process_id,
+        )),
         generated_at_unix_ms: unix_time_ms(SystemTime::now())?,
         generated_by: ReportGenerator {
             crate_name: env!("CARGO_PKG_NAME").to_string(),
@@ -526,7 +521,11 @@ fn build_report_metadata(
     })
 }
 
-fn build_transfer_id(remote: SocketAddr, transfer_started_at_unix_ms: u64, process_id: u32) -> String {
+fn build_transfer_id(
+    remote: SocketAddr,
+    transfer_started_at_unix_ms: u64,
+    process_id: u32,
+) -> String {
     format!(
         "{}-{}-{}-{}",
         REPORT_KIND,

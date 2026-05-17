@@ -94,6 +94,42 @@ fn render_overview_charts(
         )?);
     }
 
+    let vod_startup_delay = export
+        .rows
+        .iter()
+        .filter_map(|row| {
+            row.vod_startup_delay_ms
+                .map(|value| (label_for_row(row), value as f64))
+        })
+        .collect::<Vec<_>>();
+    if !vod_startup_delay.is_empty() {
+        outputs.push(render_metric_chart(
+            output_dir,
+            "vod_startup_delay_ms.svg",
+            "VOD Startup Delay",
+            &vod_startup_delay,
+            "ms",
+        )?);
+    }
+
+    let vod_rebuffer_ratio = export
+        .rows
+        .iter()
+        .filter_map(|row| {
+            row.vod_rebuffer_ratio
+                .map(|value| (label_for_row(row), value * 100.0))
+        })
+        .collect::<Vec<_>>();
+    if !vod_rebuffer_ratio.is_empty() {
+        outputs.push(render_metric_chart(
+            output_dir,
+            "vod_rebuffer_ratio.svg",
+            "VOD Rebuffer Ratio",
+            &vod_rebuffer_ratio,
+            "percent",
+        )?);
+    }
+
     Ok(outputs)
 }
 
@@ -135,6 +171,18 @@ fn render_matrix_charts(output_dir: &Path, export: &SuiteComparisonExport) -> Re
             title: "Average Age of Information",
             unit: "ms",
             value: metric_average_age_of_information_ms,
+        },
+        MetricSpec {
+            file_stem: "vod_startup_delay_ms",
+            title: "VOD Startup Delay",
+            unit: "ms",
+            value: metric_vod_startup_delay_ms,
+        },
+        MetricSpec {
+            file_stem: "vod_rebuffer_ratio",
+            title: "VOD Rebuffer Ratio",
+            unit: "percent",
+            value: metric_vod_rebuffer_ratio,
         },
     ];
 
@@ -407,6 +455,14 @@ fn metric_average_jitter_ms(row: &ComparisonRow) -> Option<f64> {
 
 fn metric_average_age_of_information_ms(row: &ComparisonRow) -> Option<f64> {
     row.average_age_of_information_ms
+}
+
+fn metric_vod_startup_delay_ms(row: &ComparisonRow) -> Option<f64> {
+    row.vod_startup_delay_ms.map(|value| value as f64)
+}
+
+fn metric_vod_rebuffer_ratio(row: &ComparisonRow) -> Option<f64> {
+    row.vod_rebuffer_ratio.map(|value| value * 100.0)
 }
 
 fn mode_key(mode: demo_client::ReplayMode) -> &'static str {

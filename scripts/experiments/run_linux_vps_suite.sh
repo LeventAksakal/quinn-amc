@@ -10,6 +10,11 @@ CURRENT_RUN_NAME=""
 RESULT_OWNER_USER="${SUDO_USER:-$(id -un)}"
 RESULT_OWNER_GROUP="$(id -gn "$RESULT_OWNER_USER" 2>/dev/null || id -gn)"
 RESULT_OWNER_SPEC="$RESULT_OWNER_USER:$RESULT_OWNER_GROUP"
+RUNNER_LOG_DIR="$WORKSPACE_ROOT/results/raw/harness/runner"
+BUILD_STAMP_PATH="$WORKSPACE_ROOT/results/.vps_suite_build_stamp"
+CLIENT_TIMEOUT_SECONDS="${CLIENT_TIMEOUT_SECONDS:-600}"
+HARNESS_ANALYZE_TIMEOUT_SECONDS="${HARNESS_ANALYZE_TIMEOUT_SECONDS:-600}"
+SERVER_LOG_TAIL_LINES="${SERVER_LOG_TAIL_LINES:-200}"
 
 log() {
   printf '[run_linux_vps_suite] %s\n' "$*"
@@ -32,6 +37,7 @@ require_command jq
 require_command tc
 require_command nsenter
 require_command ip
+require_command timeout
 
 [[ -f "$CONFIG_ABS" ]] || fail "config not found: $CONFIG_ABS"
 [[ -f "$COMPOSE_FILE" ]] || fail "compose file not found: $COMPOSE_FILE"
@@ -108,9 +114,115 @@ prepare_output_paths() {
   ensure_directory_writable "$WORKSPACE_ROOT/results"
   ensure_directory_writable "$WORKSPACE_ROOT/results/raw"
   ensure_directory_writable "$WORKSPACE_ROOT/results/raw/harness"
+  ensure_directory_writable "$RUNNER_LOG_DIR"
   ensure_directory_writable "$WORKSPACE_ROOT/results/processed"
   ensure_directory_writable "$WORKSPACE_ROOT/results/processed/harness"
   normalize_result_ownership "$WORKSPACE_ROOT/results"
+}
+
+latest_build_input_epoch() {
+  local latest=0
+  local candidate_paths=(
+    "$WORKSPACE_ROOT/Cargo.toml"
+    "$WORKSPACE_ROOT/Cargo.lock"
+    "$WORKSPACE_ROOT/rust-toolchain.toml"
+    "$WORKSPACE_ROOT/compose.yaml"
+    "$WORKSPACE_ROOT/docker"
+    "$WORKSPACE_ROOT/crates"
+    "$WORKSPACE_ROOT/configs"
+  )
+  local candidate epoch
+
+  for candidate in "${candidate_paths[@]}"; do
+    if [[ -f "$candidate" ]]; then
+      epoch="$(stat -c %Y "$candidate")"
+    elif [[ -d "$candidate" ]]; then
+      epoch="$(find "$candidate" -type f -printf '%T@\n' | sort -nr | head -n 1 | cut -d. -f1)"
+    else
+      continue
+    fi
+
+    [[ -n "$epoch" ]] || continue
+    if (( epoch > latest )); then
+      latest="$epoch"
+    fi
+  done
+
+  printf '%s\n' "$latest"
+}
+
+suite_images_present() {
+  docker image inspect \
+    quinn-amc/demo-server:distroless \
+    quinn-amc/demo-client:distroless \
+    quinn-amc/harness:distroless >/dev/null 2>&1
+}
+
+build_services_if_needed() {
+  local latest_epoch stamp_epoch=0
+  latest_epoch="$(latest_build_input_epoch)"
+
+  if [[ -f "$BUILD_STAMP_PATH" ]]; then
+    stamp_epoch="$(stat -c %Y "$BUILD_STAMP_PATH")"
+  fi
+
+  if suite_images_present && (( stamp_epoch >= latest_epoch )); then
+    log "skipping compose build: cached images are newer than tracked build inputs"
+    return 0
+  fi
+
+  log "building compose services: demo-server demo-client harness"
+  docker compose -f "$COMPOSE_FILE" --profile demo-server --profile demo-client --profile harness build demo-server demo-client harness
+  touch "$BUILD_STAMP_PATH"
+}
+
+run_log_path() {
+  local suffix="$1"
+  printf '%s/%s_%s.log\n' "$RUNNER_LOG_DIR" "$CURRENT_RUN_NAME" "$suffix"
+}
+
+capture_tc_snapshot() {
+  local interface="$1"
+  local output_path="$2"
+
+  {
+    printf 'captured_at=%s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    printf 'interface=%s\n' "$interface"
+    echo '--- qdisc ---'
+    tc qdisc show dev "$interface"
+    echo '--- qdisc stats ---'
+    tc -s qdisc show dev "$interface"
+  } >"$output_path" 2>&1 || true
+}
+
+capture_demo_server_logs() {
+  local output_path="$1"
+  docker compose -f "$COMPOSE_FILE" logs --no-color --tail "$SERVER_LOG_TAIL_LINES" demo-server >"$output_path" 2>&1 || true
+}
+
+log_file_tail() {
+  local label="$1"
+  local file_path="$2"
+
+  [[ -f "$file_path" ]] || return 0
+
+  log "$label tail: $file_path"
+  tail -n 40 "$file_path" || true
+}
+
+run_logged_with_timeout() {
+  local timeout_seconds="$1"
+  local output_path="$2"
+  shift 2
+
+  : >"$output_path"
+
+  set +e
+  timeout --signal=TERM --kill-after=10s "${timeout_seconds}s" "$@" > >(tee "$output_path") 2>&1
+  local status=$?
+  set -e
+
+  return "$status"
 }
 
 cleanup_tc_interface() {
@@ -298,8 +410,7 @@ HARNESS_CONFIG_IN_CONTAINER="/workspace/$CONFIG_PATH"
 
 prepare_output_paths
 
-log "building compose services: demo-server demo-client harness"
-docker compose -f "$COMPOSE_FILE" --profile demo-server --profile demo-client --profile harness build demo-server demo-client harness
+build_services_if_needed
 
 for run_name in $RUN_NAMES; do
   CURRENT_RUN_NAME="$run_name"
@@ -310,8 +421,14 @@ for run_name in $RUN_NAMES; do
   vod_deadline_slack_ms="$(get_run_field "$run_name" vod_deadline_slack_ms)"
   report_in_container="/workspace/results/raw/harness/${run_name}_report.json"
   report_on_host="$WORKSPACE_ROOT/results/raw/harness/${run_name}_report.json"
+  client_log_path="$(run_log_path client)"
+  server_log_path="$(run_log_path server)"
+  tc_log_path="$(run_log_path tc)"
+  timing_log_path="$(run_log_path timing)"
   scenario_json="$(get_scenario_json "$scenario_name")"
   [[ -n "$scenario_json" ]] || fail "run $run_name references unknown scenario $scenario_name"
+
+  run_started_epoch="$(date +%s)"
 
   log "starting run: name=$run_name scenario=$scenario_name controller=$controller mode=$mode pace=$pace vod_deadline_slack_ms=${vod_deadline_slack_ms:-unset}"
 
@@ -321,8 +438,13 @@ for run_name in $RUN_NAMES; do
   prepare_output_paths
   remove_output_file "$report_on_host"
   remove_output_file "$SERVER_CERT_HOST_PATH"
+  remove_output_file "$client_log_path"
+  remove_output_file "$server_log_path"
+  remove_output_file "$tc_log_path"
+  remove_output_file "$timing_log_path"
   log "run setup: cleared prior report and certificate outputs for $run_name"
 
+  server_start_epoch="$(date +%s)"
   DEMO_SERVER_REPORT_OUT="$report_in_container" \
   DEMO_SERVER_CERT_OUT="/workspace/results/demo-cert.der" \
   DEMO_SERVER_PORT=5001 \
@@ -336,19 +458,55 @@ for run_name in $RUN_NAMES; do
   log "resolved server container IP: container=$server_container_id ip=$server_container_ip"
   server_host_veth="$(get_container_host_veth "$server_container_id")"
   apply_tc_from_scenario "$server_host_veth" "$scenario_json"
+  capture_tc_snapshot "$server_host_veth" "$tc_log_path"
+  server_ready_epoch="$(date +%s)"
 
-  DEMO_CLIENT_SERVER="$server_container_ip:5001" \
-  DEMO_CLIENT_SERVER_NAME="localhost" \
-  DEMO_CLIENT_CERT="/workspace/results/demo-cert.der" \
-  DEMO_CLIENT_REPLAY_MANIFEST="$REPLAY_MANIFEST_IN_CONTAINER" \
-  DEMO_CLIENT_PACE="$pace" \
-  DEMO_CLIENT_MODE="$mode" \
-  DEMO_CLIENT_CONTROLLER="$controller" \
-  DEMO_CLIENT_VOD_DEADLINE_SLACK_MS="$vod_deadline_slack_ms" \
-  docker compose -f "$COMPOSE_FILE" --profile demo-server --profile demo-client run --rm --no-deps demo-client
+  client_start_epoch="$(date +%s)"
+  client_status=0
+  run_logged_with_timeout \
+    "$CLIENT_TIMEOUT_SECONDS" \
+    "$client_log_path" \
+    env \
+    DEMO_CLIENT_SERVER="$server_container_ip:5001" \
+    DEMO_CLIENT_SERVER_NAME="localhost" \
+    DEMO_CLIENT_CERT="/workspace/results/demo-cert.der" \
+    DEMO_CLIENT_REPLAY_MANIFEST="$REPLAY_MANIFEST_IN_CONTAINER" \
+    DEMO_CLIENT_PACE="$pace" \
+    DEMO_CLIENT_MODE="$mode" \
+    DEMO_CLIENT_CONTROLLER="$controller" \
+    DEMO_CLIENT_VOD_DEADLINE_SLACK_MS="$vod_deadline_slack_ms" \
+    docker compose -f "$COMPOSE_FILE" --profile demo-server --profile demo-client run --rm --no-deps demo-client || client_status=$?
+  client_finished_epoch="$(date +%s)"
+
+  capture_demo_server_logs "$server_log_path"
+  capture_tc_snapshot "$server_host_veth" "$tc_log_path"
+
+  {
+    printf 'run_name=%s\n' "$run_name"
+    printf 'scenario=%s\n' "$scenario_name"
+    printf 'controller=%s\n' "$controller"
+    printf 'mode=%s\n' "$mode"
+    printf 'pace=%s\n' "$pace"
+    printf 'client_exit_code=%s\n' "$client_status"
+    printf 'server_startup_seconds=%s\n' "$((server_ready_epoch - server_start_epoch))"
+    printf 'client_runtime_seconds=%s\n' "$((client_finished_epoch - client_start_epoch))"
+    printf 'total_runtime_seconds=%s\n' "$((client_finished_epoch - run_started_epoch))"
+    printf 'client_log=%s\n' "$client_log_path"
+    printf 'server_log=%s\n' "$server_log_path"
+    printf 'tc_log=%s\n' "$tc_log_path"
+  } >"$timing_log_path"
+
+  if [[ "$client_status" -ne 0 ]]; then
+    log_file_tail "client log" "$client_log_path"
+    log_file_tail "server log" "$server_log_path"
+    if [[ "$client_status" -eq 124 || "$client_status" -eq 137 ]]; then
+      fail "client timed out for $run_name after ${CLIENT_TIMEOUT_SECONDS}s"
+    fi
+    fail "client command failed for $run_name with exit code $client_status"
+  fi
 
   normalize_result_ownership "$WORKSPACE_ROOT/results"
-  log "client completed: run=$run_name report=$report_on_host"
+  log "client completed: run=$run_name report=$report_on_host client_log=$client_log_path timing_log=$timing_log_path"
 
   cleanup_tc_interface
   cleanup_demo_server
@@ -356,9 +514,23 @@ for run_name in $RUN_NAMES; do
 done
 
 CURRENT_RUN_NAME="analyze-suite"
+analysis_log_path="$(run_log_path harness-analysis)"
 
-HARNESS_CONFIG="$HARNESS_CONFIG_IN_CONTAINER" \
-docker compose -f "$COMPOSE_FILE" --profile harness run --rm harness analyze-suite --config "$HARNESS_CONFIG_IN_CONTAINER"
+analysis_status=0
+run_logged_with_timeout \
+  "$HARNESS_ANALYZE_TIMEOUT_SECONDS" \
+  "$analysis_log_path" \
+  env \
+  HARNESS_CONFIG="$HARNESS_CONFIG_IN_CONTAINER" \
+  docker compose -f "$COMPOSE_FILE" --profile harness run --rm harness analyze-suite --config "$HARNESS_CONFIG_IN_CONTAINER" || analysis_status=$?
+
+if [[ "$analysis_status" -ne 0 ]]; then
+  log_file_tail "harness analysis log" "$analysis_log_path"
+  if [[ "$analysis_status" -eq 124 || "$analysis_status" -eq 137 ]]; then
+    fail "harness analyze-suite timed out after ${HARNESS_ANALYZE_TIMEOUT_SECONDS}s"
+  fi
+  fail "harness analyze-suite failed with exit code $analysis_status"
+fi
 
 normalize_result_ownership "$WORKSPACE_ROOT/results"
 CURRENT_RUN_NAME=""

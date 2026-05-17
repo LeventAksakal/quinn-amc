@@ -66,28 +66,64 @@ fn run_app(
             let current = media.get(step).copied().or_else(|| media.first().copied());
             let progress = ((step + 1) as f64 / total_steps as f64 * 100.0).round() as u16;
             let gauge = Gauge::default()
-                .block(Block::default().title("Replay Progress").borders(Borders::ALL))
+                .block(
+                    Block::default()
+                        .title("Replay Progress")
+                        .borders(Borders::ALL),
+                )
                 .gauge_style(Style::default().fg(Color::Cyan))
                 .percent(progress);
             frame.render_widget(gauge, chunks[0]);
 
             let summary = Paragraph::new(vec![
                 Line::from(format!("asset: {}", report.summary.asset_name)),
-                Line::from(format!("controller: {:?}", report.summary.baseline_controller)),
-                Line::from(format!("segments: {} media: {}", report.summary.segments_received, report.summary.media_segments_received)),
-                Line::from(format!("useful: {} late: {}", report.summary.useful_media_segments, report.summary.late_media_segments)),
-                Line::from(format!("runtime utility samples: {}", report.summary.amc_runtime_samples)),
+                Line::from(format!(
+                    "controller: {:?}",
+                    report.summary.baseline_controller
+                )),
+                Line::from(format!(
+                    "segments: {} media: {}",
+                    report.summary.segments_received, report.summary.media_segments_received
+                )),
+                Line::from(format!(
+                    "useful: {} late: {}",
+                    report.summary.useful_media_segments, report.summary.late_media_segments
+                )),
+                Line::from(format!(
+                    "runtime utility samples: {}",
+                    report.summary.amc_runtime_samples
+                )),
             ])
-            .block(Block::default().title("Transfer Summary").borders(Borders::ALL));
+            .block(
+                Block::default()
+                    .title("Transfer Summary")
+                    .borders(Borders::ALL),
+            );
             frame.render_widget(summary, chunks[1]);
 
             let detail_lines = if let Some(current) = current {
                 vec![
-                    Line::from(format!("sequence: {} useful: {} lateness_ms: {}", current.sequence, current.useful, current.lateness_ms)),
-                    Line::from(format!("delivery_latency_ms: {}", current.server_receive_elapsed_ms.saturating_sub(current.client_send_elapsed_ms))),
-                    Line::from(format!("age_of_information_ms: {}", current.server_receive_elapsed_ms.saturating_sub(current.start_time_ms))),
+                    Line::from(format!(
+                        "sequence: {} useful: {} lateness_ms: {}",
+                        current.sequence, current.useful, current.lateness_ms
+                    )),
+                    Line::from(format!(
+                        "delivery_latency_ms: {}",
+                        current
+                            .server_receive_elapsed_ms
+                            .saturating_sub(current.client_send_elapsed_ms)
+                    )),
+                    Line::from(format!(
+                        "age_of_information_ms: {}",
+                        current
+                            .server_receive_elapsed_ms
+                            .saturating_sub(current.start_time_ms)
+                    )),
                     Line::from(match current.runtime_utility.as_ref() {
-                        Some(runtime) => format!("utility_score: {:.4} ack_gain: {:.3} loss_factor: {:.3}", runtime.utility_score, runtime.ack_gain, runtime.loss_reduction_factor),
+                        Some(runtime) => format!(
+                            "utility_score: {:.4} ack_gain: {:.3} loss_factor: {:.3}",
+                            runtime.utility_score, runtime.ack_gain, runtime.loss_reduction_factor
+                        ),
                         None => "utility_score: n/a ack_gain: n/a loss_factor: n/a".to_string(),
                     }),
                     Line::from(format!("segment_path: {}", current.segment_path)),
@@ -95,8 +131,11 @@ fn run_app(
             } else {
                 vec![Line::from("no media observations available")]
             };
-            let detail = Paragraph::new(detail_lines)
-                .block(Block::default().title("Current Observation").borders(Borders::ALL));
+            let detail = Paragraph::new(detail_lines).block(
+                Block::default()
+                    .title("Current Observation")
+                    .borders(Borders::ALL),
+            );
             frame.render_widget(detail, chunks[2]);
 
             let utility_points = media
@@ -112,7 +151,10 @@ fn run_app(
             let latency_points = media
                 .iter()
                 .take(step + 1)
-                .map(|obs| obs.server_receive_elapsed_ms.saturating_sub(obs.client_send_elapsed_ms))
+                .map(|obs| {
+                    obs.server_receive_elapsed_ms
+                        .saturating_sub(obs.client_send_elapsed_ms)
+                })
                 .collect::<Vec<_>>();
             let bottom = Layout::default()
                 .direction(Direction::Horizontal)
@@ -120,14 +162,22 @@ fn run_app(
                 .split(chunks[3]);
             frame.render_widget(
                 Sparkline::default()
-                    .block(Block::default().title("Utility Score x1000").borders(Borders::ALL))
+                    .block(
+                        Block::default()
+                            .title("Utility Score x1000")
+                            .borders(Borders::ALL),
+                    )
                     .data(&utility_points)
                     .style(Style::default().fg(Color::Green)),
                 bottom[0],
             );
             frame.render_widget(
                 Sparkline::default()
-                    .block(Block::default().title("Delivery Latency ms").borders(Borders::ALL))
+                    .block(
+                        Block::default()
+                            .title("Delivery Latency ms")
+                            .borders(Borders::ALL),
+                    )
                     .data(&latency_points)
                     .style(Style::default().fg(Color::Yellow)),
                 bottom[1],

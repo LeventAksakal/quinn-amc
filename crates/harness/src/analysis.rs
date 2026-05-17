@@ -1,8 +1,4 @@
-use std::{
-    collections::HashMap,
-    path::Path,
-    time::Duration,
-};
+use std::{collections::HashMap, path::Path, time::Duration};
 
 use amc_core::{
     DefaultUtilityScorer, Importance, MediaSemantics, TrafficClass, UtilityInputs, UtilityScorer,
@@ -151,6 +147,10 @@ pub struct ComparisonRow {
     pub average_jitter_ms: f64,
     pub average_age_of_information_ms: Option<f64>,
     pub max_age_of_information_ms: Option<u64>,
+    pub vod_startup_delay_ms: Option<u64>,
+    pub vod_rebuffer_count: Option<usize>,
+    pub vod_rebuffer_duration_ms: Option<u64>,
+    pub vod_rebuffer_ratio: Option<f64>,
     pub deadline_miss_rate: f64,
     pub amc_runtime_samples: usize,
     pub average_media_utility_score: f64,
@@ -187,7 +187,19 @@ pub struct AmcAggregate {
     pub average_jitter_ms: f64,
     pub average_age_of_information_ms: Option<f64>,
     pub max_age_of_information_ms: Option<u64>,
+    pub vod_startup_delay_ms: Option<u64>,
+    pub vod_rebuffer_count: Option<usize>,
+    pub vod_rebuffer_duration_ms: Option<u64>,
+    pub vod_rebuffer_ratio: Option<f64>,
     pub deadline_miss_rate: f64,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct VodPlaybackMetrics {
+    startup_delay_ms: u64,
+    rebuffer_count: usize,
+    rebuffer_duration_ms: u64,
+    rebuffer_ratio: f64,
 }
 
 #[derive(Debug, Serialize)]
@@ -314,7 +326,11 @@ pub fn analyze_report(
         let dependency_ready = dependency_depth == 0 || previous_media_useful;
         let delivery_deadline_ms = match observation.kind {
             SegmentKind::Init => None,
-            SegmentKind::Media => Some(observation.deadline_ms.saturating_sub(manifest_start_time_ms)),
+            SegmentKind::Media => Some(
+                observation
+                    .deadline_ms
+                    .saturating_sub(manifest_start_time_ms),
+            ),
         };
         let freshness_window_ms = derive_freshness_window_ms(
             observation.kind,
@@ -340,8 +356,8 @@ pub fn analyze_report(
         let delivery_latency_ms = observation
             .server_receive_elapsed_ms
             .saturating_sub(observation.client_send_elapsed_ms);
-        let observed_age_of_information_ms = matches!(observation.kind, SegmentKind::Media)
-            .then(|| {
+        let observed_age_of_information_ms =
+            matches!(observation.kind, SegmentKind::Media).then(|| {
                 observation
                     .server_receive_elapsed_ms
                     .saturating_sub(manifest_start_time_ms)
@@ -356,7 +372,8 @@ pub fn analyze_report(
             semantics = semantics.with_freshness_window(Duration::from_millis(freshness_window_ms));
         }
         if delivery_deadline_ms.is_none() && manifest_duration_ms > 0 {
-            semantics = semantics.with_freshness_window(Duration::from_millis(manifest_duration_ms));
+            semantics =
+                semantics.with_freshness_window(Duration::from_millis(manifest_duration_ms));
         }
 
         let utility_score = scorer
@@ -427,7 +444,9 @@ pub fn analyze_report(
     let throughput_mbps = if duration_ms == 0 {
         0.0
     } else {
-        (report.summary.total_payload_bytes as f64 * 8.0) / (duration_ms as f64 / 1_000.0) / 1_000_000.0
+        (report.summary.total_payload_bytes as f64 * 8.0)
+            / (duration_ms as f64 / 1_000.0)
+            / 1_000_000.0
     };
     let average_delivery_latency_ms = average_u64(&delivery_latencies_ms);
     let p95_delivery_latency_ms = percentile_u64(&delivery_latencies_ms, 0.95);
@@ -447,7 +466,19 @@ pub fn analyze_report(
     } else {
         None
     };
-    let deadline_miss_rate = ratio(report.summary.late_media_segments, report.summary.media_segments_received);
+    let vod_playback_metrics = if matches!(run.mode, ReplayMode::Vod) {
+        Some(compute_vod_playback_metrics(
+            replay_manifest,
+            semantic_profile,
+            report,
+        ))
+    } else {
+        None
+    };
+    let deadline_miss_rate = ratio(
+        report.summary.late_media_segments,
+        report.summary.media_segments_received,
+    );
 
     let aggregate = AmcAggregate {
         units_scored: units.len(),
@@ -478,8 +509,81 @@ pub fn analyze_report(
         average_jitter_ms,
         average_age_of_information_ms,
         max_age_of_information_ms,
+        vod_startup_delay_ms: vod_playback_metrics.map(|metrics| metrics.startup_delay_ms),
+        vod_rebuffer_count: vod_playback_metrics.map(|metrics| metrics.rebuffer_count),
+        vod_rebuffer_duration_ms: vod_playback_metrics.map(|metrics| metrics.rebuffer_duration_ms),
+        vod_rebuffer_ratio: vod_playback_metrics.map(|metrics| metrics.rebuffer_ratio),
         deadline_miss_rate,
     };
+    fn compute_vod_playback_metrics(
+        replay_manifest: &ReplayManifest,
+        semantic_profile: &SemanticProfileConfig,
+        report: &TransferReport,
+    ) -> VodPlaybackMetrics {
+        let mut media_observations = report
+            .observations
+            .iter()
+            .filter(|observation| matches!(observation.kind, SegmentKind::Media))
+            .collect::<Vec<_>>();
+        media_observations
+            .sort_by_key(|observation| (observation.start_time_ms, observation.sequence));
+
+        if media_observations.is_empty() {
+            return VodPlaybackMetrics {
+                startup_delay_ms: 0,
+                rebuffer_count: 0,
+                rebuffer_duration_ms: 0,
+                rebuffer_ratio: 0.0,
+            };
+        }
+
+        let startup_segments = replay_manifest
+            .semantic_defaults
+            .startup_segment_count
+            .unwrap_or(semantic_profile.startup_segments)
+            .max(1) as usize;
+        let startup_count = startup_segments.min(media_observations.len());
+        let first_media_start_ms = media_observations[0].start_time_ms;
+        let startup_delay_ms = media_observations
+            .iter()
+            .take(startup_count)
+            .map(|observation| observation.server_receive_elapsed_ms)
+            .max()
+            .unwrap_or(0);
+        let total_playback_duration_ms = media_observations
+            .iter()
+            .map(|observation| observation.duration_ms)
+            .sum::<u64>()
+            .max(1);
+
+        let mut rebuffer_count = 0usize;
+        let mut rebuffer_duration_ms = 0u64;
+        let mut accumulated_stall_ms = 0u64;
+        for observation in media_observations.iter().skip(startup_count) {
+            let expected_playout_wall_ms = startup_delay_ms
+                .saturating_add(
+                    observation
+                        .start_time_ms
+                        .saturating_sub(first_media_start_ms),
+                )
+                .saturating_add(accumulated_stall_ms);
+            if observation.server_receive_elapsed_ms > expected_playout_wall_ms {
+                let stall_ms = observation
+                    .server_receive_elapsed_ms
+                    .saturating_sub(expected_playout_wall_ms);
+                rebuffer_count += 1;
+                rebuffer_duration_ms = rebuffer_duration_ms.saturating_add(stall_ms);
+                accumulated_stall_ms = accumulated_stall_ms.saturating_add(stall_ms);
+            }
+        }
+
+        VodPlaybackMetrics {
+            startup_delay_ms,
+            rebuffer_count,
+            rebuffer_duration_ms,
+            rebuffer_ratio: rebuffer_duration_ms as f64 / total_playback_duration_ms as f64,
+        }
+    }
 
     AmcRunAnalysis {
         run_name: run.name.clone(),
@@ -571,7 +675,9 @@ fn derive_freshness_window_ms(
 
     let base_window = semantic_hint
         .and_then(|hint| hint.freshness_window_ms)
-        .or(replay_manifest.semantic_defaults.default_freshness_window_ms);
+        .or(replay_manifest
+            .semantic_defaults
+            .default_freshness_window_ms);
 
     Some(match mode {
         ReplayMode::Vod => base_window
@@ -621,7 +727,8 @@ pub async fn write_comparison_export(path: &Path, export: &SuiteComparisonExport
             .await
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
-    let bytes = serde_json::to_vec_pretty(export).context("failed to encode harness comparison export")?;
+    let bytes =
+        serde_json::to_vec_pretty(export).context("failed to encode harness comparison export")?;
     fs::write(path, bytes)
         .await
         .with_context(|| format!("failed to write {}", path.display()))
@@ -647,7 +754,16 @@ pub fn build_suite_comparison_export(
     }
 
     let mut expected_controllers_by_cell: HashMap<String, Vec<String>> = HashMap::new();
-    let mut scenario_meta_by_cell: HashMap<String, (ReplayMode, demo_client::Pace, String, NetworkScenarioKind, bool)> = HashMap::new();
+    let mut scenario_meta_by_cell: HashMap<
+        String,
+        (
+            ReplayMode,
+            demo_client::Pace,
+            String,
+            NetworkScenarioKind,
+            bool,
+        ),
+    > = HashMap::new();
     for run in configured_runs {
         let scenario = network_scenarios
             .iter()
@@ -667,8 +783,12 @@ pub fn build_suite_comparison_export(
                 run.mode,
                 run.pace,
                 run.network_scenario.clone(),
-                scenario.map(|value| value.kind).unwrap_or(NetworkScenarioKind::Local),
-                scenario.map(|value| value.tc_netem_enabled).unwrap_or(false),
+                scenario
+                    .map(|value| value.kind)
+                    .unwrap_or(NetworkScenarioKind::Local),
+                scenario
+                    .map(|value| value.tc_netem_enabled)
+                    .unwrap_or(false),
             )
         });
     }
@@ -694,7 +814,9 @@ pub fn build_suite_comparison_export(
             let missing_controllers = expected_controllers
                 .iter()
                 .filter(|controller| {
-                    !runs.iter().any(|run| controller_label(run.controller) == controller.as_str())
+                    !runs
+                        .iter()
+                        .any(|run| controller_label(run.controller) == controller.as_str())
                 })
                 .cloned()
                 .collect::<Vec<_>>();
@@ -813,6 +935,10 @@ impl ComparisonRow {
             average_jitter_ms: run.amc_aggregate.average_jitter_ms,
             average_age_of_information_ms: run.amc_aggregate.average_age_of_information_ms,
             max_age_of_information_ms: run.amc_aggregate.max_age_of_information_ms,
+            vod_startup_delay_ms: run.amc_aggregate.vod_startup_delay_ms,
+            vod_rebuffer_count: run.amc_aggregate.vod_rebuffer_count,
+            vod_rebuffer_duration_ms: run.amc_aggregate.vod_rebuffer_duration_ms,
+            vod_rebuffer_ratio: run.amc_aggregate.vod_rebuffer_ratio,
             deadline_miss_rate: run.amc_aggregate.deadline_miss_rate,
             amc_runtime_samples: run.summary.amc_runtime_samples,
             average_media_utility_score: run.amc_aggregate.average_media_utility_score,

@@ -115,10 +115,13 @@ pub fn validate_suite_config(config: &SuiteConfig) -> Result<()> {
         errors.push("runs must contain at least one run".to_string());
     }
     if config.vod_freshness_window_ms() == 0 {
-        errors.push("semantic_profile.vod_freshness_window_ms must be greater than zero".to_string());
+        errors
+            .push("semantic_profile.vod_freshness_window_ms must be greater than zero".to_string());
     }
     if config.live_freshness_window_ms() == 0 {
-        errors.push("semantic_profile.live_freshness_window_ms must be greater than zero".to_string());
+        errors.push(
+            "semantic_profile.live_freshness_window_ms must be greater than zero".to_string(),
+        );
     }
 
     if !config.runs.is_empty()

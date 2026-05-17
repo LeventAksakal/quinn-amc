@@ -41,12 +41,12 @@ pub struct UtilitySignal {
 
 impl UtilitySignal {
     pub fn from_score(score: UtilityScore) -> Self {
-        let normalized = (score.0 * 8.0).clamp(0.0, 1.0);
+        let normalized = (score.0 * 128.0).clamp(0.0, 1.0).sqrt();
 
         Self {
             score,
-            ack_gain: 0.5 + (1.5 * normalized),
-            loss_reduction_factor: 0.35 + (0.5 * normalized),
+            ack_gain: 1.0 + (1.25 * normalized),
+            loss_reduction_factor: 0.7 + (0.2 * normalized),
         }
     }
 }
@@ -54,9 +54,9 @@ impl UtilitySignal {
 impl Default for UtilitySignal {
     fn default() -> Self {
         Self {
-            score: UtilityScore(0.0625),
-            ack_gain: 1.0,
-            loss_reduction_factor: 0.5,
+            score: UtilityScore(0.01),
+            ack_gain: 1.4,
+            loss_reduction_factor: 0.76,
         }
     }
 }
@@ -91,8 +91,10 @@ impl RuntimeUtilityState {
     pub fn store_signal(&self, signal: UtilitySignal) {
         self.score_bits
             .store(signal.score.0.to_bits(), Ordering::Relaxed);
-        self.ack_gain_milli
-            .store((signal.ack_gain * 1_000.0).round() as u32, Ordering::Relaxed);
+        self.ack_gain_milli.store(
+            (signal.ack_gain * 1_000.0).round() as u32,
+            Ordering::Relaxed,
+        );
         self.loss_reduction_milli.store(
             (signal.loss_reduction_factor * 1_000.0).round() as u32,
             Ordering::Relaxed,
@@ -137,9 +139,9 @@ impl Default for AmcControllerConfig {
     fn default() -> Self {
         Self {
             runtime_state: Arc::new(RuntimeUtilityState::default()),
-            initial_window_datagrams: 10,
-            min_window_datagrams: 2,
-            max_window_datagrams: 200,
+            initial_window_datagrams: 20,
+            min_window_datagrams: 4,
+            max_window_datagrams: 400,
         }
     }
 }
@@ -360,13 +362,16 @@ fn expiry_penalty(limit: Duration, observed: Duration) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::Arc, time::{Duration, Instant}};
+    use std::{
+        sync::Arc,
+        time::{Duration, Instant},
+    };
 
     use quinn::congestion::ControllerFactory;
 
     use super::{
         AmcControllerConfig, DefaultUtilityScorer, RuntimeUtilityState, UtilityInputs,
-        UtilityScorer, UtilitySignal, UtilityScore,
+        UtilityScore, UtilityScorer, UtilitySignal,
     };
     use crate::semantics::{Importance, MediaSemantics, TrafficClass};
 
@@ -438,9 +443,7 @@ mod tests {
         let snapshot = state.snapshot();
         assert_eq!(snapshot.score, signal.score);
         assert!((snapshot.ack_gain - signal.ack_gain).abs() < 0.001);
-        assert!(
-            (snapshot.loss_reduction_factor - signal.loss_reduction_factor).abs() < 0.001
-        );
+        assert!((snapshot.loss_reduction_factor - signal.loss_reduction_factor).abs() < 0.001);
     }
 
     #[test]
@@ -487,9 +490,8 @@ mod tests {
         runtime_state.store_signal(UtilitySignal::from_score(UtilityScore(0.0)));
 
         let now = Instant::now();
-        let factory = Arc::new(
-            AmcControllerConfig::default().with_runtime_state(runtime_state.clone()),
-        );
+        let factory =
+            Arc::new(AmcControllerConfig::default().with_runtime_state(runtime_state.clone()));
         let mut controller = factory.build(now, 1_200);
 
         let window_before = controller.window();

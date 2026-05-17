@@ -2,16 +2,16 @@
 use std::process::Command;
 
 #[cfg(target_os = "linux")]
+use anyhow::bail;
+#[cfg(target_os = "linux")]
 use anyhow::{Context, Result, anyhow};
 #[cfg(not(target_os = "linux"))]
 use anyhow::{Result, bail};
-#[cfg(target_os = "linux")]
-use anyhow::bail;
 use tracing::{info, warn};
 
-use crate::config::{NetworkScenario, NetworkScenarioKind};
 #[cfg(target_os = "linux")]
 use crate::config::TcNetemConfig;
+use crate::config::{NetworkScenario, NetworkScenarioKind};
 
 pub struct NetworkControlGuard {
     scenario_name: String,
@@ -71,7 +71,10 @@ fn apply_linux_tc_netem(scenario: &NetworkScenario) -> Result<NetworkControlGuar
 
     #[cfg(target_os = "linux")]
     {
-        let tc = scenario.tc_netem.as_ref().expect("validated tc_netem config");
+        let tc = scenario
+            .tc_netem
+            .as_ref()
+            .expect("validated tc_netem config");
         apply_tc_root(scenario, tc)?;
         apply_optional_tbf(scenario, tc)?;
 
@@ -110,10 +113,12 @@ fn validate_linux_tc_netem_requirements(scenario: &NetworkScenario) -> Result<()
 
     #[cfg(target_os = "linux")]
     {
-        let tc = scenario
-            .tc_netem
-            .as_ref()
-            .with_context(|| format!("scenario {} is missing tc_netem configuration", scenario.name))?;
+        let tc = scenario.tc_netem.as_ref().with_context(|| {
+            format!(
+                "scenario {} is missing tc_netem configuration",
+                scenario.name
+            )
+        })?;
         if tc.interface.trim().is_empty() {
             bail!(
                 "scenario {} must provide a non-empty tc_netem.interface for Linux tc netem",
@@ -224,7 +229,9 @@ fn cleanup_tc(interface: &str) -> Result<()> {
         }
         Err(error) => {
             let message = error.to_string();
-            if message.contains("No such file or directory") || message.contains("Cannot delete qdisc with handle of zero") {
+            if message.contains("No such file or directory")
+                || message.contains("Cannot delete qdisc with handle of zero")
+            {
                 Ok(())
             } else {
                 Err(error)

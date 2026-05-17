@@ -131,6 +131,8 @@ The VPS runner now normalizes `results/` ownership back to the invoking user whe
 
 The Docker build path also defaults to BuildKit via the runner, and the service Dockerfiles use cache mounts for Cargo registry, git, and target state to reduce repeated VPS rebuild cost.
 
+The VPS suite runner now also keeps a build stamp under `results/` and skips `docker compose build` when the tracked source inputs are older than the cached service images. It also writes per-run diagnostics under `results/raw/harness/runner/`, including client logs, recent server logs, tc qdisc snapshots, and simple timing logs.
+
 The current organization policy disables service account key creation, so the validated remote update path is manual rather than GitHub Actions based. Use `gcloud compute ssh` to access the VM and update the checkout in place with `git pull` when possible, or copy a prepared repository archive with `gcloud compute scp` when the host cannot pull directly from GitHub.
 
 The clean-host bootstrap path is:
@@ -263,6 +265,8 @@ The controller set is intentionally limited to Quinn's current built-ins plus AM
 - `amc_preview` as the only custom controller in this repository
 
 The comparison export now includes workload-oriented metrics such as throughput, delivery latency, jitter, deadline miss rate, and live average age of information. Partial controller matrices are preserved in the export with explicit `missing_controllers` metadata instead of aborting the entire analysis pass. The plotter keeps overview charts and also emits scenario-grouped controller comparison figures per mode and pace so fixed-preset suites produce figure-ready outputs directly.
+
+For VOD, the processed comparison export now also records continuity-oriented metrics from a simple buffered playout model: startup delay, rebuffer count, rebuffer duration, and rebuffer ratio. This keeps VOD comparisons informative even when all controllers eventually deliver every segment.
 
 For a Windows-safe local controller sweep that produces real data across all four controllers, run:
 
