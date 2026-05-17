@@ -11,6 +11,8 @@ use quinn::congestion::{Controller, ControllerFactory, ControllerMetrics};
 
 use crate::semantics::{Importance, MediaSemantics, TrafficClass};
 
+const UTILITY_SIGNAL_EWMA_WEIGHT: f64 = 0.35;
+
 fn scale_window_for_mtu(window: u64, old_mtu: u64, new_mtu: u64) -> u64 {
     if old_mtu == 0 || new_mtu == 0 {
         return window;
@@ -83,7 +85,8 @@ impl RuntimeUtilityState {
     where
         S: UtilityScorer,
     {
-        let signal = UtilitySignal::from_score(scorer.score(inputs));
+        let observed = UtilitySignal::from_score(scorer.score(inputs));
+        let signal = blend_signal(self.snapshot(), observed, UTILITY_SIGNAL_EWMA_WEIGHT);
         self.store_signal(signal);
         signal
     }
@@ -115,6 +118,20 @@ impl RuntimeUtilityState {
             ack_gain: ack_gain_milli as f64 / 1_000.0,
             loss_reduction_factor: loss_reduction_milli as f64 / 1_000.0,
         }
+    }
+}
+
+fn blend_signal(previous: UtilitySignal, current: UtilitySignal, weight: f64) -> UtilitySignal {
+    let weight = weight.clamp(0.0, 1.0);
+    let blend = |previous: f64, current: f64| previous + ((current - previous) * weight);
+
+    UtilitySignal {
+        score: UtilityScore(blend(previous.score.0, current.score.0)),
+        ack_gain: blend(previous.ack_gain, current.ack_gain),
+        loss_reduction_factor: blend(
+            previous.loss_reduction_factor,
+            current.loss_reduction_factor,
+        ),
     }
 }
 
@@ -218,7 +235,10 @@ impl AmcController {
 
     fn growth_step(&self) -> u64 {
         let signal = self.runtime_state.snapshot();
-        ((self.current_mtu as f64 * signal.ack_gain).round() as u64).max(self.current_mtu / 2)
+        let window_datagrams = self.window.div_ceil(self.current_mtu).max(1) as f64;
+        let taper = window_datagrams.sqrt().max(1.0);
+        (((self.current_mtu as f64 * signal.ack_gain) / taper).round() as u64)
+            .max(self.current_mtu / 4)
     }
 }
 
@@ -367,7 +387,7 @@ mod tests {
         time::{Duration, Instant},
     };
 
-    use quinn::congestion::ControllerFactory;
+    use quinn::congestion::{Controller, ControllerFactory};
 
     use super::{
         AmcControllerConfig, DefaultUtilityScorer, RuntimeUtilityState, UtilityInputs,
@@ -447,6 +467,45 @@ mod tests {
     }
 
     #[test]
+    fn runtime_state_smooths_new_utility_observations() {
+        let state = RuntimeUtilityState::default();
+        let scorer = DefaultUtilityScorer;
+
+        let low_signal = state.update_from_inputs(
+            &scorer,
+            &UtilityInputs {
+                semantics: MediaSemantics::new(TrafficClass::Vod, Importance::Background, 16_000),
+                queue_delay: Duration::from_millis(40),
+                estimated_rtt: Duration::from_millis(80),
+                dependency_ready: false,
+            },
+        );
+        let high_raw = UtilitySignal::from_score(
+            scorer.score(&UtilityInputs {
+                semantics: MediaSemantics::new(TrafficClass::Live, Importance::Critical, 1_000)
+                    .with_delivery_deadline(Duration::from_millis(120)),
+                queue_delay: Duration::from_millis(2),
+                estimated_rtt: Duration::from_millis(12),
+                dependency_ready: true,
+            }),
+        );
+        let high_smoothed = state.update_from_inputs(
+            &scorer,
+            &UtilityInputs {
+                semantics: MediaSemantics::new(TrafficClass::Live, Importance::Critical, 1_000)
+                    .with_delivery_deadline(Duration::from_millis(120)),
+                queue_delay: Duration::from_millis(2),
+                estimated_rtt: Duration::from_millis(12),
+                dependency_ready: true,
+            },
+        );
+
+        assert!(high_smoothed.score > low_signal.score);
+        assert!(high_smoothed.score < high_raw.score);
+        assert!(high_smoothed.ack_gain < high_raw.ack_gain);
+    }
+
+    #[test]
     fn amc_controller_changes_window_from_runtime_signal() {
         let low_state = Arc::new(RuntimeUtilityState::default());
         low_state.store_signal(UtilitySignal::from_score(UtilityScore(0.0)));
@@ -507,6 +566,28 @@ mod tests {
     }
 
     #[test]
+    fn larger_windows_taper_growth() {
+        let runtime_state = Arc::new(RuntimeUtilityState::default());
+        runtime_state.store_signal(UtilitySignal::from_score(UtilityScore(0.2)));
+
+        let now = Instant::now();
+        let mut small = super::AmcController::new(runtime_state.clone(), now, 1_200, 20, 4, 400);
+        let mut large = super::AmcController::new(runtime_state, now, 1_200, 20, 4, 400);
+        small.window = 20 * 1_200;
+        small.ssthresh = 10 * 1_200;
+        large.window = 80 * 1_200;
+        large.ssthresh = 10 * 1_200;
+
+        let small_before = small.window();
+        let large_before = large.window();
+
+        small.on_end_acks(now + Duration::from_millis(1), 0, false, Some(1));
+        large.on_end_acks(now + Duration::from_millis(1), 0, false, Some(1));
+
+        assert!(small.window() - small_before > large.window() - large_before);
+    }
+
+    #[test]
     fn mtu_updates_preserve_datagram_windows() {
         let runtime_state = Arc::new(RuntimeUtilityState::default());
         let now = Instant::now();
@@ -519,6 +600,6 @@ mod tests {
         controller.on_mtu_update(1_500);
 
         assert_eq!(controller.window().div_ceil(1_500), datagrams_before);
-        assert_eq!(controller.initial_window().div_ceil(1_500), 10);
+        assert_eq!(controller.initial_window().div_ceil(1_500), 20);
     }
 }
