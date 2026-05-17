@@ -12,8 +12,9 @@ use std::{
 };
 
 use analysis::{
-    RunOutcome, SkippedRun, SuiteSummary, analyze_report, build_suite_comparison_export,
-    load_replay_manifest, load_transfer_report, write_amc_analysis, write_comparison_export,
+    CoexistenceOutcome, RunOutcome, SkippedRun, SuiteSummary, analyze_report,
+    build_suite_comparison_export, compute_fairness_metrics, load_replay_manifest,
+    load_transfer_report, write_amc_analysis, write_comparison_export,
 };
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
@@ -117,6 +118,12 @@ async fn run_local_suite(
         .parse()
         .with_context(|| format!("invalid host/port {}:{}", config.host, config.base_port))?;
     let suite_server = Arc::new(SuiteServer::bind(suite_server_addr, cert_path.clone()).await?);
+    let coexistence_suite_server_addr = coexistence_server_addr(config)?;
+    let coexistence_suite_server = if let Some(addr) = coexistence_suite_server_addr {
+        Some(Arc::new(SuiteServer::bind(addr, cert_path.clone()).await?))
+    } else {
+        None
+    };
     let mut runs = Vec::with_capacity(config.runs.len());
 
     for run in &config.runs {
@@ -125,14 +132,29 @@ async fn run_local_suite(
                 .ok_or_else(|| anyhow!("unknown network scenario {}", run.network_scenario))?;
         let absolute_report_path = report_output_path(workspace_root, config, &run.name);
         let amc_analysis_path = amc_output_path(workspace_root, config, &run.name);
-        let transfer_report = if report_is_fresh(
-            &absolute_report_path,
-            &[config_path, &replay_manifest_path],
-        )
-        .await?
-        {
+        let coexistence_report_path = coexistence_report_output_path(workspace_root, config, run);
+        let coexistence_amc_path = coexistence_amc_output_path(workspace_root, config, run);
+        let report_is_reusable =
+            report_is_fresh(&absolute_report_path, &[config_path, &replay_manifest_path]).await?
+                && if run.coexistence.is_some() {
+                    report_is_fresh(
+                        &coexistence_report_path,
+                        &[config_path, &replay_manifest_path],
+                    )
+                    .await?
+                } else {
+                    true
+                };
+        let (transfer_report, coexistence_report) = if report_is_reusable {
             info!(run = %run.name, report = %path_relative_to(workspace_root, &absolute_report_path), "skipping transport because raw report is fresh");
-            load_transfer_report(&absolute_report_path).await?
+            (
+                load_transfer_report(&absolute_report_path).await?,
+                if run.coexistence.is_some() {
+                    Some(load_transfer_report(&coexistence_report_path).await?)
+                } else {
+                    None
+                },
+            )
         } else {
             let _network_guard = apply_network_scenario(network_scenario)?;
             info!(run = %run.name, mode = ?run.mode, pace = ?run.pace, scenario = %network_scenario.name, server = %suite_server_addr, "starting harness run");
@@ -142,39 +164,92 @@ async fn run_local_suite(
             let server_task: JoinHandle<Result<TransferReport>> =
                 tokio::spawn(async move { server.run_transfer(&report_out).await });
 
-            let client_summary = run_prepared(
-                ClientArgs {
-                    bind: "0.0.0.0:0".parse().unwrap(),
-                    server: suite_server_addr,
-                    server_name: "localhost".to_string(),
-                    cert: cert_path.clone(),
-                    replay_manifest: replay_manifest_path.clone(),
-                    pace: run.pace,
-                    controller: run.controller,
-                    mode: run.mode,
-                    vod_deadline_slack_ms: run.vod_deadline_slack_ms.unwrap_or(30_000),
-                },
-                &prepared_replay,
-                suite_server.cert_der(),
-            )
-            .await
-            .with_context(|| format!("client run {} failed", run.name))?;
+            if let Some(coexistence) = run.coexistence.as_ref() {
+                let coexistence_server = coexistence_suite_server
+                    .as_ref()
+                    .cloned()
+                    .context("coexistence run requested without coexistence server")?;
+                let coexistence_server_addr = coexistence_suite_server_addr
+                    .context("coexistence run requested without coexistence server address")?;
+                let coexistence_report_out = coexistence_report_path.clone();
+                let coexistence_server_for_task = coexistence_server.clone();
+                let coexistence_server_task: JoinHandle<Result<TransferReport>> =
+                    tokio::spawn(async move {
+                        coexistence_server_for_task
+                            .run_transfer(&coexistence_report_out)
+                            .await
+                    });
 
-            let transfer_report = server_task
+                let (client_summary, coexistence_summary) = tokio::try_join!(
+                    run_prepared(
+                        client_args_from_run(
+                            suite_server_addr,
+                            &cert_path,
+                            &replay_manifest_path,
+                            run,
+                        ),
+                        &prepared_replay,
+                        suite_server.cert_der(),
+                    ),
+                    run_prepared(
+                        client_args_from_coexistence(
+                            coexistence_server_addr,
+                            &cert_path,
+                            &replay_manifest_path,
+                            coexistence,
+                        ),
+                        &prepared_replay,
+                        coexistence_server.cert_der(),
+                    ),
+                )
+                .with_context(|| format!("client coexistence run {} failed", run.name))?;
+
+                let transfer_report = server_task
+                    .await
+                    .context("foreground server task join failed")?
+                    .with_context(|| format!("server run {} failed", run.name))?;
+                let coexistence_report = coexistence_server_task
+                    .await
+                    .context("coexistence server task join failed")?
+                    .with_context(|| format!("coexistence server run {} failed", run.name))?;
+
+                ensure_report_path_match(
+                    &run.name,
+                    "foreground",
+                    &client_summary.report_path,
+                    &transfer_report.summary.report_path,
+                )?;
+                ensure_report_path_match(
+                    &run.name,
+                    "coexistence",
+                    &coexistence_summary.report_path,
+                    &coexistence_report.summary.report_path,
+                )?;
+
+                (transfer_report, Some(coexistence_report))
+            } else {
+                let client_summary = run_prepared(
+                    client_args_from_run(suite_server_addr, &cert_path, &replay_manifest_path, run),
+                    &prepared_replay,
+                    suite_server.cert_der(),
+                )
                 .await
-                .context("server task join failed")?
-                .with_context(|| format!("server run {} failed", run.name))?;
+                .with_context(|| format!("client run {} failed", run.name))?;
 
-            if client_summary.report_path != transfer_report.summary.report_path {
-                return Err(anyhow!(
-                    "client/server report path mismatch for {}: {} vs {}",
-                    run.name,
-                    client_summary.report_path,
-                    transfer_report.summary.report_path
-                ));
+                let transfer_report = server_task
+                    .await
+                    .context("server task join failed")?
+                    .with_context(|| format!("server run {} failed", run.name))?;
+
+                ensure_report_path_match(
+                    &run.name,
+                    "foreground",
+                    &client_summary.report_path,
+                    &transfer_report.summary.report_path,
+                )?;
+
+                (transfer_report, None)
             }
-
-            transfer_report
         };
 
         if transfer_report.summary.baseline_controller != run.controller {
@@ -194,6 +269,43 @@ async fn run_local_suite(
         );
         write_amc_analysis(&amc_analysis_path, &amc_analysis).await?;
 
+        let coexistence = if let (Some(coexistence_config), Some(coexistence_report)) =
+            (run.coexistence.as_ref(), coexistence_report)
+        {
+            if coexistence_report.summary.baseline_controller != coexistence_config.controller {
+                return Err(anyhow!(
+                    "coexistence controller mismatch for {}: run config {:?} vs raw report {:?}",
+                    run.name,
+                    coexistence_config.controller,
+                    coexistence_report.summary.baseline_controller
+                ));
+            }
+            let coexistence_analysis = analyze_report(
+                run,
+                network_scenario,
+                &config.semantic_profile,
+                &replay_manifest,
+                &coexistence_report,
+            );
+            write_amc_analysis(&coexistence_amc_path, &coexistence_analysis).await?;
+
+            Some(CoexistenceOutcome {
+                controller: coexistence_config.controller,
+                mode: coexistence_config.mode,
+                pace: coexistence_config.pace,
+                report_path: path_relative_to(workspace_root, &coexistence_report_path),
+                amc_analysis_path: path_relative_to(workspace_root, &coexistence_amc_path),
+                amc_aggregate: coexistence_analysis.aggregate.clone(),
+                summary: coexistence_report.summary.clone(),
+                fairness: compute_fairness_metrics(
+                    &amc_analysis.aggregate,
+                    &coexistence_analysis.aggregate,
+                ),
+            })
+        } else {
+            None
+        };
+
         runs.push(RunOutcome {
             name: run.name.clone(),
             controller: run.controller,
@@ -205,10 +317,14 @@ async fn run_local_suite(
             amc_analysis_path: path_relative_to(workspace_root, &amc_analysis_path),
             amc_aggregate: amc_analysis.aggregate.clone(),
             summary: transfer_report.summary.clone(),
+            coexistence,
         });
     }
 
     suite_server.shutdown().await;
+    if let Some(server) = coexistence_suite_server {
+        server.shutdown().await;
+    }
 
     write_suite_summary(workspace_root, config, runs, Vec::new()).await
 }
@@ -231,6 +347,8 @@ async fn analyze_existing_suite(
         let server_addr = format!("{}:{}", config.host, port);
         let absolute_report_path = report_output_path(workspace_root, config, &run.name);
         let amc_analysis_path = amc_output_path(workspace_root, config, &run.name);
+        let coexistence_report_path = coexistence_report_output_path(workspace_root, config, run);
+        let coexistence_amc_path = coexistence_amc_output_path(workspace_root, config, run);
         let transfer_report = match load_transfer_report(&absolute_report_path).await {
             Ok(report) => report,
             Err(error) => {
@@ -246,6 +364,29 @@ async fn analyze_existing_suite(
                 });
                 continue;
             }
+        };
+        let coexistence_report = if run.coexistence.is_some() {
+            match load_transfer_report(&coexistence_report_path).await {
+                Ok(report) => Some(report),
+                Err(error) => {
+                    warn!(run = %run.name, report = %path_relative_to(workspace_root, &coexistence_report_path), error = %error, "skipping run without coexistence raw report during analyze-suite");
+                    skipped_runs.push(SkippedRun {
+                        name: run.name.clone(),
+                        controller: run.controller,
+                        mode: run.mode,
+                        pace: run.pace,
+                        network_scenario: run.network_scenario.clone(),
+                        expected_report_path: path_relative_to(
+                            workspace_root,
+                            &coexistence_report_path,
+                        ),
+                        reason: "missing coexistence raw report".to_string(),
+                    });
+                    continue;
+                }
+            }
+        } else {
+            None
         };
         if transfer_report.summary.baseline_controller != run.controller {
             return Err(anyhow!(
@@ -264,6 +405,43 @@ async fn analyze_existing_suite(
         );
         write_amc_analysis(&amc_analysis_path, &amc_analysis).await?;
 
+        let coexistence = if let (Some(coexistence_config), Some(coexistence_report)) =
+            (run.coexistence.as_ref(), coexistence_report)
+        {
+            if coexistence_report.summary.baseline_controller != coexistence_config.controller {
+                return Err(anyhow!(
+                    "coexistence controller mismatch for {}: run config {:?} vs raw report {:?}",
+                    run.name,
+                    coexistence_config.controller,
+                    coexistence_report.summary.baseline_controller
+                ));
+            }
+            let coexistence_analysis = analyze_report(
+                run,
+                network_scenario,
+                &config.semantic_profile,
+                &replay_manifest,
+                &coexistence_report,
+            );
+            write_amc_analysis(&coexistence_amc_path, &coexistence_analysis).await?;
+
+            Some(CoexistenceOutcome {
+                controller: coexistence_config.controller,
+                mode: coexistence_config.mode,
+                pace: coexistence_config.pace,
+                report_path: path_relative_to(workspace_root, &coexistence_report_path),
+                amc_analysis_path: path_relative_to(workspace_root, &coexistence_amc_path),
+                amc_aggregate: coexistence_analysis.aggregate.clone(),
+                summary: coexistence_report.summary.clone(),
+                fairness: compute_fairness_metrics(
+                    &amc_analysis.aggregate,
+                    &coexistence_analysis.aggregate,
+                ),
+            })
+        } else {
+            None
+        };
+
         runs.push(RunOutcome {
             name: run.name.clone(),
             controller: run.controller,
@@ -275,6 +453,7 @@ async fn analyze_existing_suite(
             amc_analysis_path: path_relative_to(workspace_root, &amc_analysis_path),
             amc_aggregate: amc_analysis.aggregate.clone(),
             summary: transfer_report.summary,
+            coexistence,
         });
     }
 
@@ -342,6 +521,113 @@ fn amc_output_path(workspace_root: &Path, config: &SuiteConfig, run_name: &str) 
     )
 }
 
+fn coexistence_report_output_path(
+    workspace_root: &Path,
+    config: &SuiteConfig,
+    run: &config::RunConfig,
+) -> PathBuf {
+    resolve_path(
+        workspace_root,
+        &config
+            .results_root
+            .join("raw")
+            .join("harness")
+            .join(format!("{}_coexistence_report.json", run.name)),
+    )
+}
+
+fn coexistence_amc_output_path(
+    workspace_root: &Path,
+    config: &SuiteConfig,
+    run: &config::RunConfig,
+) -> PathBuf {
+    resolve_path(
+        workspace_root,
+        &config
+            .results_root
+            .join("processed")
+            .join("harness")
+            .join(format!("{}_coexistence_amc.json", run.name)),
+    )
+}
+
+fn client_args_from_run(
+    server: SocketAddr,
+    cert_path: &Path,
+    replay_manifest_path: &Path,
+    run: &config::RunConfig,
+) -> ClientArgs {
+    ClientArgs {
+        bind: "0.0.0.0:0".parse().unwrap(),
+        server,
+        server_name: "localhost".to_string(),
+        cert: cert_path.to_path_buf(),
+        replay_manifest: replay_manifest_path.to_path_buf(),
+        pace: run.pace,
+        controller: run.controller,
+        mode: run.mode,
+        vod_deadline_slack_ms: run.vod_deadline_slack_ms.unwrap_or(30_000),
+    }
+}
+
+fn client_args_from_coexistence(
+    server: SocketAddr,
+    cert_path: &Path,
+    replay_manifest_path: &Path,
+    coexistence: &config::CoexistenceConfig,
+) -> ClientArgs {
+    ClientArgs {
+        bind: "0.0.0.0:0".parse().unwrap(),
+        server,
+        server_name: "localhost".to_string(),
+        cert: cert_path.to_path_buf(),
+        replay_manifest: replay_manifest_path.to_path_buf(),
+        pace: coexistence.pace,
+        controller: coexistence.controller,
+        mode: coexistence.mode,
+        vod_deadline_slack_ms: coexistence.vod_deadline_slack_ms.unwrap_or(30_000),
+    }
+}
+
+fn ensure_report_path_match(
+    run_name: &str,
+    label: &str,
+    client_report_path: &str,
+    server_report_path: &str,
+) -> Result<()> {
+    if client_report_path != server_report_path {
+        Err(anyhow!(
+            "{} report path mismatch for {}: {} vs {}",
+            label,
+            run_name,
+            client_report_path,
+            server_report_path
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn coexistence_server_addr(config: &SuiteConfig) -> Result<Option<SocketAddr>> {
+    if !config.runs.iter().any(|run| run.coexistence.is_some()) {
+        return Ok(None);
+    }
+
+    let coexistence_port = config
+        .base_port
+        .checked_add(1000)
+        .context("coexistence server port overflowed u16 range")?;
+    let addr = format!("{}:{}", config.host, coexistence_port)
+        .parse()
+        .with_context(|| {
+            format!(
+                "invalid coexistence host/port {}:{}",
+                config.host, coexistence_port
+            )
+        })?;
+    Ok(Some(addr))
+}
+
 fn summary_output_path(workspace_root: &Path, config: &SuiteConfig) -> PathBuf {
     resolve_path(
         workspace_root,
@@ -404,6 +690,7 @@ async fn preflight_suite(
 
     if matches!(command, SuiteCommand::Run) {
         ensure_parent_dir(&resolve_path(workspace_root, &config.cert_path)).await?;
+        let _ = coexistence_server_addr(config)?;
     }
 
     for (index, run) in config.runs.iter().enumerate() {
@@ -413,6 +700,8 @@ async fn preflight_suite(
 
         let report_path = report_output_path(workspace_root, config, &run.name);
         let amc_analysis_path = amc_output_path(workspace_root, config, &run.name);
+        let coexistence_report_path = coexistence_report_output_path(workspace_root, config, run);
+        let coexistence_amc_path = coexistence_amc_output_path(workspace_root, config, run);
         ensure_distinct_output_path(
             &mut output_paths,
             &format!("raw report for run {}", run.name),
@@ -432,6 +721,9 @@ async fn preflight_suite(
                 validate_network_scenario_for_run(scenario)
                     .with_context(|| format!("network preflight failed for run {}", run.name))?;
                 ensure_parent_dir(&report_path).await?;
+                if run.coexistence.is_some() {
+                    ensure_parent_dir(&coexistence_report_path).await?;
+                }
             }
             SuiteCommand::Analyze => {
                 let _ = report_path;
@@ -439,6 +731,19 @@ async fn preflight_suite(
         }
 
         ensure_parent_dir(&amc_analysis_path).await?;
+        if run.coexistence.is_some() {
+            ensure_distinct_output_path(
+                &mut output_paths,
+                &format!("coexistence raw report for run {}", run.name),
+                &coexistence_report_path,
+            )?;
+            ensure_distinct_output_path(
+                &mut output_paths,
+                &format!("coexistence AMC analysis for run {}", run.name),
+                &coexistence_amc_path,
+            )?;
+            ensure_parent_dir(&coexistence_amc_path).await?;
+        }
     }
 
     Ok(())

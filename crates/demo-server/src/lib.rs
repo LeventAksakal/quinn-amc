@@ -410,6 +410,9 @@ async fn process_transfer(
         .await
         .context("failed to write response")?;
     send.finish().context("failed to finish response stream")?;
+    send.stopped()
+        .await
+        .context("failed while waiting for response delivery")?;
 
     info!(
         remote = %remote,

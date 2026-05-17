@@ -165,6 +165,8 @@ Expected VPS outputs:
 - `results/processed/harness/*_comparison.json`
 - `results/figures/harness/*.svg` after `plot-suite`, including matrix-aware files such as `live_realtime_throughput_mbps.svg` and `vod_realtime_useful_media_ratio.svg`
 
+Fairness and coexistence runs are a separate experiment family. The harness now supports an optional concurrent competitor flow per run and records the competitor report plus fairness metrics in the suite summary and comparison export. A practical local smoke config is `configs/harness/local_live_immediate_amc_bbr_coexistence.json`, and the current VPS guardrail suite is `configs/harness/vps_live_coexistence_bbr_guardrail.json`.
+
 ## Quinn feature selection
 
 The workspace pins Quinn with this feature set:

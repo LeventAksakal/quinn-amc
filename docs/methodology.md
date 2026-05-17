@@ -136,6 +136,8 @@ The current locked metric split is:
 - Any application policy that changes reliability mode or packetization must be documented clearly because it affects comparability.
 - QUIC datagrams are out of scope for the primary claim and should only be added as a secondary experiment axis if time permits.
 - Mixed-workload experiments should be separate from single-class experiments because QUIC congestion control is connection-wide.
+- Coexistence and fairness checks should run as a separate experiment family with concurrent same-class flows on the same shaped link, not as replacements for the primary single-flow matrix.
+- A fairness guardrail suite should report at least throughput share and Jain fairness index for a foreground controller against a baseline competing flow.
 
 Current AMC v1 reporting limit:
 

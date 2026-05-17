@@ -2,7 +2,7 @@ use std::{
     any::Any,
     sync::{
         Arc,
-        atomic::{AtomicU32, AtomicU64, Ordering},
+        atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -36,19 +36,40 @@ pub struct UtilityScore(pub f64);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct UtilitySignal {
+    pub traffic_class: TrafficClass,
     pub score: UtilityScore,
     pub ack_gain: f64,
     pub loss_reduction_factor: f64,
 }
 
 impl UtilitySignal {
+    pub fn from_inputs(inputs: &UtilityInputs) -> Self {
+        Self::from_score_for_traffic_class(
+            inputs.semantics.traffic_class,
+            DefaultUtilityScorer.score(inputs),
+        )
+    }
+
     pub fn from_score(score: UtilityScore) -> Self {
-        let normalized = (score.0 * 128.0).clamp(0.0, 1.0).sqrt();
+        Self::from_score_for_traffic_class(TrafficClass::Live, score)
+    }
+
+    pub fn from_score_for_traffic_class(traffic_class: TrafficClass, score: UtilityScore) -> Self {
+        let normalized = match traffic_class {
+            TrafficClass::Vod => (score.0 * 96.0).clamp(0.0, 1.0).sqrt(),
+            TrafficClass::Live => (score.0 * 128.0).clamp(0.0, 1.0).sqrt(),
+        };
+
+        let (ack_gain, loss_reduction_factor) = match traffic_class {
+            TrafficClass::Vod => (0.55 + (0.35 * normalized), 0.50 + (0.15 * normalized)),
+            TrafficClass::Live => (1.0 + (1.0 * normalized), 0.72 + (0.16 * normalized)),
+        };
 
         Self {
+            traffic_class,
             score,
-            ack_gain: 1.0 + (1.25 * normalized),
-            loss_reduction_factor: 0.7 + (0.2 * normalized),
+            ack_gain,
+            loss_reduction_factor,
         }
     }
 }
@@ -56,6 +77,7 @@ impl UtilitySignal {
 impl Default for UtilitySignal {
     fn default() -> Self {
         Self {
+            traffic_class: TrafficClass::Live,
             score: UtilityScore(0.01),
             ack_gain: 1.4,
             loss_reduction_factor: 0.76,
@@ -65,6 +87,7 @@ impl Default for UtilitySignal {
 
 #[derive(Debug, Default)]
 pub struct RuntimeUtilityState {
+    traffic_class_tag: AtomicU8,
     score_bits: AtomicU64,
     ack_gain_milli: AtomicU32,
     loss_reduction_milli: AtomicU32,
@@ -85,13 +108,18 @@ impl RuntimeUtilityState {
     where
         S: UtilityScorer,
     {
-        let observed = UtilitySignal::from_score(scorer.score(inputs));
+        let observed = UtilitySignal::from_score_for_traffic_class(
+            inputs.semantics.traffic_class,
+            scorer.score(inputs),
+        );
         let signal = blend_signal(self.snapshot(), observed, UTILITY_SIGNAL_EWMA_WEIGHT);
         self.store_signal(signal);
         signal
     }
 
     pub fn store_signal(&self, signal: UtilitySignal) {
+        self.traffic_class_tag
+            .store(traffic_class_tag(signal.traffic_class), Ordering::Relaxed);
         self.score_bits
             .store(signal.score.0.to_bits(), Ordering::Relaxed);
         self.ack_gain_milli.store(
@@ -106,14 +134,20 @@ impl RuntimeUtilityState {
 
     pub fn snapshot(&self) -> UtilitySignal {
         let score_bits = self.score_bits.load(Ordering::Relaxed);
+        let traffic_class_tag = self.traffic_class_tag.load(Ordering::Relaxed);
         let ack_gain_milli = self.ack_gain_milli.load(Ordering::Relaxed);
         let loss_reduction_milli = self.loss_reduction_milli.load(Ordering::Relaxed);
 
-        if score_bits == 0 && ack_gain_milli == 0 && loss_reduction_milli == 0 {
+        if traffic_class_tag == 0
+            && score_bits == 0
+            && ack_gain_milli == 0
+            && loss_reduction_milli == 0
+        {
             return UtilitySignal::default();
         }
 
         UtilitySignal {
+            traffic_class: traffic_class_from_tag(traffic_class_tag),
             score: UtilityScore(f64::from_bits(score_bits)),
             ack_gain: ack_gain_milli as f64 / 1_000.0,
             loss_reduction_factor: loss_reduction_milli as f64 / 1_000.0,
@@ -126,12 +160,27 @@ fn blend_signal(previous: UtilitySignal, current: UtilitySignal, weight: f64) ->
     let blend = |previous: f64, current: f64| previous + ((current - previous) * weight);
 
     UtilitySignal {
+        traffic_class: current.traffic_class,
         score: UtilityScore(blend(previous.score.0, current.score.0)),
         ack_gain: blend(previous.ack_gain, current.ack_gain),
         loss_reduction_factor: blend(
             previous.loss_reduction_factor,
             current.loss_reduction_factor,
         ),
+    }
+}
+
+fn traffic_class_tag(traffic_class: TrafficClass) -> u8 {
+    match traffic_class {
+        TrafficClass::Vod => 1,
+        TrafficClass::Live => 2,
+    }
+}
+
+fn traffic_class_from_tag(tag: u8) -> TrafficClass {
+    match tag {
+        1 => TrafficClass::Vod,
+        _ => TrafficClass::Live,
     }
 }
 
@@ -233,12 +282,26 @@ impl AmcController {
         self.max_window_datagrams * self.current_mtu
     }
 
-    fn growth_step(&self) -> u64 {
-        let signal = self.runtime_state.snapshot();
-        let window_datagrams = self.window.div_ceil(self.current_mtu).max(1) as f64;
-        let taper = window_datagrams.sqrt().max(1.0);
-        (((self.current_mtu as f64 * signal.ack_gain) / taper).round() as u64)
-            .max(self.current_mtu / 4)
+    fn class_max_window(&self, signal: UtilitySignal) -> u64 {
+        match signal.traffic_class {
+            TrafficClass::Vod => (self.max_window() / 2).max(self.min_window()),
+            TrafficClass::Live => self.max_window(),
+        }
+    }
+
+    fn growth_step(&self, signal: UtilitySignal) -> u64 {
+        let base_gain = match signal.traffic_class {
+            TrafficClass::Vod => signal.ack_gain * 0.75,
+            TrafficClass::Live => signal.ack_gain,
+        };
+
+        if self.window < self.ssthresh {
+            ((self.current_mtu as f64 * base_gain).round() as u64).max(self.current_mtu / 4)
+        } else {
+            let additive =
+                ((self.current_mtu * self.current_mtu) as f64 / self.window as f64) * base_gain;
+            (additive.round() as u64).max(self.current_mtu / 16)
+        }
     }
 }
 
@@ -254,14 +317,10 @@ impl Controller for AmcController {
             return;
         }
 
-        let step = self.growth_step();
-        let growth = if self.window < self.ssthresh {
-            step.saturating_mul(2)
-        } else {
-            step
-        };
-
-        self.window = (self.window + growth).clamp(self.min_window(), self.max_window());
+        let signal = self.runtime_state.snapshot();
+        let growth = self.growth_step(signal);
+        self.window =
+            (self.window + growth).clamp(self.min_window(), self.class_max_window(signal));
     }
 
     fn on_congestion_event(
@@ -279,6 +338,7 @@ impl Controller for AmcController {
         let signal = self.runtime_state.snapshot();
         self.window = ((self.window as f64) * signal.loss_reduction_factor).round() as u64;
         self.window = self.window.max(self.min_window());
+        self.window = self.window.min(self.class_max_window(signal));
         self.ssthresh = self.window;
 
         if is_persistent_congestion {
@@ -461,9 +521,20 @@ mod tests {
         state.store_signal(signal);
 
         let snapshot = state.snapshot();
+        assert_eq!(snapshot.traffic_class, signal.traffic_class);
         assert_eq!(snapshot.score, signal.score);
         assert!((snapshot.ack_gain - signal.ack_gain).abs() < 0.001);
         assert!((snapshot.loss_reduction_factor - signal.loss_reduction_factor).abs() < 0.001);
+    }
+
+    #[test]
+    fn live_signal_is_more_aggressive_than_vod_for_same_score() {
+        let score = UtilityScore(0.01);
+        let live = UtilitySignal::from_score_for_traffic_class(TrafficClass::Live, score);
+        let vod = UtilitySignal::from_score_for_traffic_class(TrafficClass::Vod, score);
+
+        assert!(live.ack_gain > vod.ack_gain);
+        assert!(live.loss_reduction_factor > vod.loss_reduction_factor);
     }
 
     #[test]

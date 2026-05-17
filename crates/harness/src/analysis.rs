@@ -71,6 +71,28 @@ pub struct RunOutcome {
     pub amc_analysis_path: String,
     pub amc_aggregate: AmcAggregate,
     pub summary: demo_server::TransferSummary,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coexistence: Option<CoexistenceOutcome>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct FairnessMetrics {
+    pub foreground_throughput_share: f64,
+    pub competitor_throughput_share: f64,
+    pub throughput_ratio: f64,
+    pub jain_fairness_index: f64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct CoexistenceOutcome {
+    pub controller: BaselineController,
+    pub mode: ReplayMode,
+    pub pace: demo_client::Pace,
+    pub report_path: String,
+    pub amc_analysis_path: String,
+    pub amc_aggregate: AmcAggregate,
+    pub summary: demo_server::TransferSummary,
+    pub fairness: FairnessMetrics,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -97,6 +119,7 @@ pub struct SuiteComparisonExport {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ComparisonGroup {
     pub comparison_cell: String,
+    pub coexistence_label: String,
     pub mode: ReplayMode,
     pub pace: demo_client::Pace,
     pub network_scenario: String,
@@ -121,6 +144,7 @@ pub struct ControllerRunRef {
 pub struct ComparisonRow {
     pub run_name: String,
     pub comparison_cell: String,
+    pub coexistence_label: String,
     pub controller: BaselineController,
     pub mode: ReplayMode,
     pub pace: demo_client::Pace,
@@ -156,6 +180,18 @@ pub struct ComparisonRow {
     pub average_media_utility_score: f64,
     pub useful_media_utility_sum: f64,
     pub dependency_blocked_media_units: usize,
+    pub coexistence_controller: Option<BaselineController>,
+    pub coexistence_mode: Option<ReplayMode>,
+    pub coexistence_pace: Option<demo_client::Pace>,
+    pub coexistence_report_path: Option<String>,
+    pub coexistence_amc_analysis_path: Option<String>,
+    pub coexistence_competitor_throughput_mbps: Option<f64>,
+    pub coexistence_competitor_useful_media_ratio: Option<f64>,
+    pub coexistence_competitor_deadline_miss_rate: Option<f64>,
+    pub coexistence_foreground_throughput_share: Option<f64>,
+    pub coexistence_competitor_throughput_share: Option<f64>,
+    pub coexistence_throughput_ratio: Option<f64>,
+    pub coexistence_jain_fairness_index: Option<f64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -734,6 +770,32 @@ pub async fn write_comparison_export(path: &Path, export: &SuiteComparisonExport
         .with_context(|| format!("failed to write {}", path.display()))
 }
 
+pub fn compute_fairness_metrics(
+    foreground: &AmcAggregate,
+    competitor: &AmcAggregate,
+) -> FairnessMetrics {
+    let foreground_throughput = foreground.throughput_mbps.max(0.0);
+    let competitor_throughput = competitor.throughput_mbps.max(0.0);
+    let total = (foreground_throughput + competitor_throughput).max(f64::EPSILON);
+    let sum = foreground_throughput + competitor_throughput;
+    let sum_sq = foreground_throughput.powi(2) + competitor_throughput.powi(2);
+
+    FairnessMetrics {
+        foreground_throughput_share: foreground_throughput / total,
+        competitor_throughput_share: competitor_throughput / total,
+        throughput_ratio: if competitor_throughput <= f64::EPSILON {
+            0.0
+        } else {
+            foreground_throughput / competitor_throughput
+        },
+        jain_fairness_index: if sum_sq <= f64::EPSILON {
+            0.0
+        } else {
+            (sum * sum) / (2.0 * sum_sq)
+        },
+    }
+}
+
 pub fn build_suite_comparison_export(
     suite_name: &str,
     replay_manifest: &str,
@@ -760,6 +822,7 @@ pub fn build_suite_comparison_export(
             ReplayMode,
             demo_client::Pace,
             String,
+            String,
             NetworkScenarioKind,
             bool,
         ),
@@ -769,10 +832,11 @@ pub fn build_suite_comparison_export(
             .iter()
             .find(|scenario| scenario.name == run.network_scenario);
         let cell = format!(
-            "{}|{}|{}",
+            "{}|{}|{}|{}",
             run.network_scenario,
             replay_mode_label(run.mode),
-            pace_label(run.pace)
+            pace_label(run.pace),
+            coexistence_label_from_config(run)
         );
         expected_controllers_by_cell
             .entry(cell.clone())
@@ -782,6 +846,7 @@ pub fn build_suite_comparison_export(
             (
                 run.mode,
                 run.pace,
+                coexistence_label_from_config(run),
                 run.network_scenario.clone(),
                 scenario
                     .map(|value| value.kind)
@@ -798,6 +863,7 @@ pub fn build_suite_comparison_export(
             (
                 run.mode,
                 run.pace,
+                coexistence_label_from_run(run),
                 run.network_scenario.name.clone(),
                 run.network_scenario.kind,
                 run.network_scenario.tc_netem_enabled,
@@ -808,7 +874,7 @@ pub fn build_suite_comparison_export(
     let mut matrix_groups = expected_controllers_by_cell
         .into_iter()
         .filter_map(|(comparison_cell, expected_controllers)| {
-            let (mode, pace, network_scenario, network_kind, tc_netem_enabled) =
+            let (mode, pace, coexistence_label, network_scenario, network_kind, tc_netem_enabled) =
                 scenario_meta_by_cell.get(&comparison_cell)?.clone();
             let runs = grouped_runs.remove(&comparison_cell).unwrap_or_default();
             let missing_controllers = expected_controllers
@@ -822,6 +888,7 @@ pub fn build_suite_comparison_export(
                 .collect::<Vec<_>>();
             Some(ComparisonGroup::from_parts(
                 comparison_cell,
+                coexistence_label,
                 mode,
                 pace,
                 network_scenario,
@@ -852,6 +919,7 @@ pub fn build_suite_comparison_export(
 impl ComparisonGroup {
     fn from_parts(
         comparison_cell: String,
+        coexistence_label: String,
         mode: ReplayMode,
         pace: demo_client::Pace,
         network_scenario: String,
@@ -886,6 +954,7 @@ impl ComparisonGroup {
 
         Self {
             comparison_cell,
+            coexistence_label,
             mode,
             pace,
             network_scenario,
@@ -909,6 +978,7 @@ impl ComparisonRow {
         Self {
             run_name: run.name.clone(),
             comparison_cell: comparison_cell(run),
+            coexistence_label: coexistence_label_from_run(run),
             controller: run.controller,
             mode: run.mode,
             pace: run.pace,
@@ -944,6 +1014,47 @@ impl ComparisonRow {
             average_media_utility_score: run.amc_aggregate.average_media_utility_score,
             useful_media_utility_sum: run.amc_aggregate.useful_media_utility_sum,
             dependency_blocked_media_units: run.amc_aggregate.dependency_blocked_media_units,
+            coexistence_controller: run.coexistence.as_ref().map(|value| value.controller),
+            coexistence_mode: run.coexistence.as_ref().map(|value| value.mode),
+            coexistence_pace: run.coexistence.as_ref().map(|value| value.pace),
+            coexistence_report_path: run
+                .coexistence
+                .as_ref()
+                .map(|value| value.report_path.clone()),
+            coexistence_amc_analysis_path: run
+                .coexistence
+                .as_ref()
+                .map(|value| value.amc_analysis_path.clone()),
+            coexistence_competitor_throughput_mbps: run
+                .coexistence
+                .as_ref()
+                .map(|value| value.amc_aggregate.throughput_mbps),
+            coexistence_competitor_useful_media_ratio: run.coexistence.as_ref().map(|value| {
+                ratio(
+                    value.summary.useful_media_segments,
+                    value.summary.media_segments_received,
+                )
+            }),
+            coexistence_competitor_deadline_miss_rate: run
+                .coexistence
+                .as_ref()
+                .map(|value| value.amc_aggregate.deadline_miss_rate),
+            coexistence_foreground_throughput_share: run
+                .coexistence
+                .as_ref()
+                .map(|value| value.fairness.foreground_throughput_share),
+            coexistence_competitor_throughput_share: run
+                .coexistence
+                .as_ref()
+                .map(|value| value.fairness.competitor_throughput_share),
+            coexistence_throughput_ratio: run
+                .coexistence
+                .as_ref()
+                .map(|value| value.fairness.throughput_ratio),
+            coexistence_jain_fairness_index: run
+                .coexistence
+                .as_ref()
+                .map(|value| value.fairness.jain_fairness_index),
         }
     }
 }
@@ -958,22 +1069,48 @@ fn ratio(numerator: usize, denominator: usize) -> f64 {
 
 fn comparison_sort_key(run: &RunOutcome) -> String {
     format!(
-        "{}|{}|{}|{}|{}",
+        "{}|{}|{}|{}|{}|{}",
         network_kind_label(run.network_scenario.kind),
         run.network_scenario.name,
         replay_mode_label(run.mode),
         pace_label(run.pace),
+        coexistence_label_from_run(run),
         controller_label(run.controller)
     )
 }
 
 fn comparison_cell(run: &RunOutcome) -> String {
     format!(
-        "{}|{}|{}",
+        "{}|{}|{}|{}",
         run.network_scenario.name,
         replay_mode_label(run.mode),
-        pace_label(run.pace)
+        pace_label(run.pace),
+        coexistence_label_from_run(run)
     )
+}
+
+fn coexistence_label_from_run(run: &RunOutcome) -> String {
+    match run.coexistence.as_ref() {
+        Some(coexistence) => format!(
+            "with_{}_{}_{}",
+            controller_label(coexistence.controller),
+            replay_mode_label(coexistence.mode),
+            pace_label(coexistence.pace)
+        ),
+        None => "solo".to_string(),
+    }
+}
+
+fn coexistence_label_from_config(run: &RunConfig) -> String {
+    match run.coexistence.as_ref() {
+        Some(coexistence) => format!(
+            "with_{}_{}_{}",
+            controller_label(coexistence.controller),
+            replay_mode_label(coexistence.mode),
+            pace_label(coexistence.pace)
+        ),
+        None => "solo".to_string(),
+    }
 }
 
 fn controller_label(controller: BaselineController) -> &'static str {

@@ -71,6 +71,14 @@ pub enum ImportanceConfig {
     Critical,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct CoexistenceConfig {
+    pub controller: BaselineController,
+    pub mode: ReplayMode,
+    pub pace: Pace,
+    pub vod_deadline_slack_ms: Option<u64>,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct RunConfig {
     pub name: String,
@@ -80,6 +88,8 @@ pub struct RunConfig {
     pub pace: Pace,
     pub network_scenario: String,
     pub vod_deadline_slack_ms: Option<u64>,
+    #[serde(default)]
+    pub coexistence: Option<CoexistenceConfig>,
 }
 
 pub fn find_network_scenario<'a>(
@@ -240,31 +250,56 @@ pub fn validate_suite_config(config: &SuiteConfig) -> Result<()> {
                 run.name
             ));
         }
+        if let Some(coexistence) = &run.coexistence {
+            if matches!(coexistence.vod_deadline_slack_ms, Some(0)) {
+                errors.push(format!(
+                    "run '{}' coexistence flow must use vod_deadline_slack_ms > 0 when provided",
+                    run.name
+                ));
+            }
+            if replay_mode_label(coexistence.mode) != replay_mode_label(run.mode) {
+                errors.push(format!(
+                    "run '{}' coexistence mode {:?} must match foreground mode {:?}; mixed-workload coexistence should use a separate experiment family",
+                    run.name,
+                    coexistence.mode,
+                    run.mode
+                ));
+            }
+            if pace_label(coexistence.pace) != pace_label(run.pace) {
+                errors.push(format!(
+                    "run '{}' coexistence pace {:?} must match foreground pace {:?}",
+                    run.name, coexistence.pace, run.pace
+                ));
+            }
+        }
 
         let matrix_cell_key = format!(
-            "{}|{}|{}|{}",
+            "{}|{}|{}|{}|{}",
             controller_label(run.controller),
             replay_mode_label(run.mode),
             pace_label(run.pace),
-            run.network_scenario
+            run.network_scenario,
+            coexistence_label(run.coexistence.as_ref())
         );
         if let Some(existing_run) = matrix_cells.insert(matrix_cell_key, run.name.as_str()) {
             errors.push(format!(
-                "run '{}' duplicates controller matrix coverage already provided by run '{}' for controller '{}', mode '{}', pace '{}', and network scenario '{}'",
+                "run '{}' duplicates controller matrix coverage already provided by run '{}' for controller '{}', mode '{}', pace '{}', network scenario '{}', and coexistence setting '{}'",
                 run.name,
                 existing_run,
                 controller_label(run.controller),
                 replay_mode_label(run.mode),
                 pace_label(run.pace),
-                run.network_scenario
+                run.network_scenario,
+                coexistence_label(run.coexistence.as_ref())
             ));
         }
 
         let comparison_group_key = format!(
-            "{}|{}|{}",
+            "{}|{}|{}|{}",
             replay_mode_label(run.mode),
             pace_label(run.pace),
-            run.network_scenario
+            run.network_scenario,
+            coexistence_label(run.coexistence.as_ref())
         );
         match comparison_groups.entry(comparison_group_key) {
             std::collections::hash_map::Entry::Vacant(entry) => {
@@ -322,6 +357,18 @@ impl SuiteConfig {
 
     fn live_freshness_window_ms(&self) -> u64 {
         self.semantic_profile.live_freshness_window_ms
+    }
+}
+
+fn coexistence_label(coexistence: Option<&CoexistenceConfig>) -> String {
+    match coexistence {
+        Some(coexistence) => format!(
+            "with_{}_{}_{}",
+            controller_label(coexistence.controller),
+            replay_mode_label(coexistence.mode),
+            pace_label(coexistence.pace)
+        ),
+        None => "solo".to_string(),
     }
 }
 

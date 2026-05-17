@@ -1,0 +1,169 @@
+{
+  "suite_name": "vps_live_coexistence_bbr_guardrail",
+  "host": "demo-server",
+  "base_port": 5001,
+  "cert_path": "results/demo-cert.der",
+  "replay_manifest": "data/processed/manifests/sintel_trailer_replay.json",
+  "server_startup_delay_ms": 500,
+  "results_root": "results",
+  "network_scenarios": [
+    {
+      "name": "wifi_unstable",
+      "kind": "linux_tc_netem",
+      "description": "Higher-jitter WiFi preset with concurrent-flow fairness pressure.",
+      "rtt_ms": 55,
+      "loss_percent": 1.0,
+      "bandwidth_mbps": 12,
+      "tc_netem_enabled": true,
+      "tc_netem": {
+        "interface": "server-container-host-veth",
+        "delay_jitter_ms": 15,
+        "limit_packets": 160,
+        "rate_burst_kbit": 256,
+        "rate_latency_ms": 50
+      },
+      "notes": "Fairness guardrail scenario for unstable WiFi conditions."
+    },
+    {
+      "name": "lte_constrained",
+      "kind": "linux_tc_netem",
+      "description": "Constrained LTE preset with concurrent-flow fairness pressure.",
+      "rtt_ms": 110,
+      "loss_percent": 1.5,
+      "bandwidth_mbps": 8,
+      "tc_netem_enabled": true,
+      "tc_netem": {
+        "interface": "server-container-host-veth",
+        "delay_jitter_ms": 20,
+        "limit_packets": 128,
+        "rate_burst_kbit": 192,
+        "rate_latency_ms": 65
+      },
+      "notes": "Fairness guardrail scenario for the hardest live preset."
+    }
+  ],
+  "semantic_profile": {
+    "startup_segments": 3,
+    "startup_importance": "critical",
+    "vod_steady_importance": "normal",
+    "live_steady_importance": "high",
+    "independent_segment_interval": 4,
+    "dependent_depth": 1,
+    "vod_freshness_window_ms": 30000,
+    "live_freshness_window_ms": 1000
+  },
+  "runs": [
+    {
+      "name": "live_realtime_new_reno_wifi_unstable_with_bbr",
+      "controller": "new_reno",
+      "mode": "live",
+      "pace": "realtime",
+      "network_scenario": "wifi_unstable",
+      "vod_deadline_slack_ms": 30000,
+      "coexistence": {
+        "controller": "bbr",
+        "mode": "live",
+        "pace": "realtime",
+        "vod_deadline_slack_ms": 30000
+      }
+    },
+    {
+      "name": "live_realtime_cubic_wifi_unstable_with_bbr",
+      "controller": "cubic",
+      "mode": "live",
+      "pace": "realtime",
+      "network_scenario": "wifi_unstable",
+      "vod_deadline_slack_ms": 30000,
+      "coexistence": {
+        "controller": "bbr",
+        "mode": "live",
+        "pace": "realtime",
+        "vod_deadline_slack_ms": 30000
+      }
+    },
+    {
+      "name": "live_realtime_bbr_wifi_unstable_with_bbr",
+      "controller": "bbr",
+      "mode": "live",
+      "pace": "realtime",
+      "network_scenario": "wifi_unstable",
+      "vod_deadline_slack_ms": 30000,
+      "coexistence": {
+        "controller": "bbr",
+        "mode": "live",
+        "pace": "realtime",
+        "vod_deadline_slack_ms": 30000
+      }
+    },
+    {
+      "name": "live_realtime_amc_preview_wifi_unstable_with_bbr",
+      "controller": "amc_preview",
+      "mode": "live",
+      "pace": "realtime",
+      "network_scenario": "wifi_unstable",
+      "vod_deadline_slack_ms": 30000,
+      "coexistence": {
+        "controller": "bbr",
+        "mode": "live",
+        "pace": "realtime",
+        "vod_deadline_slack_ms": 30000
+      }
+    },
+    {
+      "name": "live_realtime_new_reno_lte_constrained_with_bbr",
+      "controller": "new_reno",
+      "mode": "live",
+      "pace": "realtime",
+      "network_scenario": "lte_constrained",
+      "vod_deadline_slack_ms": 30000,
+      "coexistence": {
+        "controller": "bbr",
+        "mode": "live",
+        "pace": "realtime",
+        "vod_deadline_slack_ms": 30000
+      }
+    },
+    {
+      "name": "live_realtime_cubic_lte_constrained_with_bbr",
+      "controller": "cubic",
+      "mode": "live",
+      "pace": "realtime",
+      "network_scenario": "lte_constrained",
+      "vod_deadline_slack_ms": 30000,
+      "coexistence": {
+        "controller": "bbr",
+        "mode": "live",
+        "pace": "realtime",
+        "vod_deadline_slack_ms": 30000
+      }
+    },
+    {
+      "name": "live_realtime_bbr_lte_constrained_with_bbr",
+      "controller": "bbr",
+      "mode": "live",
+      "pace": "realtime",
+      "network_scenario": "lte_constrained",
+      "vod_deadline_slack_ms": 30000,
+      "coexistence": {
+        "controller": "bbr",
+        "mode": "live",
+        "pace": "realtime",
+        "vod_deadline_slack_ms": 30000
+      }
+    },
+    {
+      "name": "live_realtime_amc_preview_lte_constrained_with_bbr",
+      "controller": "amc_preview",
+      "mode": "live",
+      "pace": "realtime",
+      "network_scenario": "lte_constrained",
+      "vod_deadline_slack_ms": 30000,
+      "coexistence": {
+        "controller": "bbr",
+        "mode": "live",
+        "pace": "realtime",
+        "vod_deadline_slack_ms": 30000
+      }
+    }
+  ]
+}
