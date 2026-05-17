@@ -79,6 +79,15 @@ Phase 6 resolves the final figure system around the frozen Phase 5 artifacts ins
 - The fairness guardrail figure family now covers the same live transport and usefulness surfaces plus foreground throughput share, throughput ratio, and Jain fairness index.
 - Later phases should consume the Phase 6 figure outputs directly or regenerate them only from the same two canonical comparison exports.
 
+## Phase 7 Resolution
+
+Phase 7 resolves the report package around one versioned Markdown report plus one validated generated package workflow.
+
+- The canonical reviewer-readable report now lives at `docs/final-report.md` and stays versioned with the repository.
+- The validated report-package command is `cargo run -p harness -- package-report`, which consumes only the two canonical comparison exports plus the frozen Phase 6 figure directory.
+- The validated generated package layout lives under `results/reports/final/` and contains a packaged report copy, the four canonical processed artifacts, the 39 frozen figures, a manifest, and a reproducibility note.
+- Phase 7 does not widen the evidence boundary, regenerate plots, or add HTML or PDF export; later phases should inherit the Markdown-first package workflow as-is unless they explicitly reopen format scope.
+
 ## Phase Overview
 
 ### Phase 1: Define Done And Freeze Scope

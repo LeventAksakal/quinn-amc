@@ -68,6 +68,14 @@ Phase 6 completes the final SVG figure set from the frozen Phase 5 comparison ex
 - figure outputs under `results/figures/harness/` are now suite-prefixed so the fixed matrix and fairness guardrail families can live in one directory without collisions
 - the validated final figure set contains `39` SVGs spanning live and VOD usefulness, deadline miss rate, throughput, delivery latency, jitter, live average age of information, VOD startup delay, VOD rebuffer ratio, foreground throughput share, fairness throughput ratio, and Jain fairness index
 
+## Phase 7 Report Package
+
+Phase 7 turns the frozen evidence and frozen figure set into a reviewer-readable report workflow.
+
+- the canonical report now lives at `docs/final-report.md`
+- the validated package command is `cargo run -p harness -- package-report`
+- the validated generated package layout under `results/reports/final/` contains `report.md`, `manifest.json`, `reproducibility.md`, the four canonical processed artifacts, and the 39 frozen figures
+
 ## Config Status
 
 | Status | Configs | Current role |
@@ -206,6 +214,12 @@ cargo run -p harness -- plot-suite --comparison results/processed/harness/vps_fi
 cargo run -p harness -- plot-suite --comparison results/processed/harness/vps_host_live_coexistence_bbr_guardrail_comparison.json --output-dir results/figures/harness
 ```
 
+Frozen final-evidence report workflow:
+
+```powershell
+cargo run -p harness -- package-report --report docs/final-report.md --matrix-comparison results/processed/harness/vps_fixed_preset_controller_matrix_comparison.json --fairness-comparison results/processed/harness/vps_host_live_coexistence_bbr_guardrail_comparison.json --figure-dir results/figures/harness --output-dir results/reports/final
+```
+
 The first command is the canonical single-flow matrix path. The second command sequence is the canonical fairness guardrail path. They intentionally use different execution modes in the current repository because `run_linux_vps_suite.sh` is still single-client only.
 
 The compose VPS runner now rejects configs that contain `runs[*].coexistence` and validates the referenced replay manifest before launching any container work. That preflight checks the manifest file itself, the init segment, every referenced media segment, each declared `size_bytes`, and whether the manifest is stale relative to any referenced segment payload.
@@ -237,6 +251,7 @@ Direct harness behavior is split intentionally:
 - `cargo run -p harness -- run-suite --config ...` generates raw reports and processed outputs
 - `cargo run -p harness -- analyze-suite --config ...` only analyzes already-existing raw reports, skips missing matrix cells, and fails only if no raw reports are available at all
 - `cargo run -p harness -- plot-suite --comparison ... --output-dir results/figures/harness` renders suite-prefixed overview and scenario-grouped SVG figures from a comparison export
+- `cargo run -p harness -- package-report ...` validates the frozen comparison exports and figure inventory, then assembles a Markdown-first report package under `results/reports/final/`
 - `cargo run -p harness -- live-demo --report ...` replays a raw report in a ratatui dashboard so the controller and utility signals can be inspected live
 
 The suite run path now avoids several fixed per-cell costs:
@@ -260,6 +275,7 @@ Expected VPS outputs:
 - `results/processed/harness/*_summary.json`
 - `results/processed/harness/*_comparison.json`
 - `results/figures/harness/*.svg` after plotting the two canonical comparison exports, including suite-aware files such as `vps_fixed_preset_controller_matrix_overview_throughput_mbps.svg` and `vps_host_live_coexistence_bbr_guardrail_live_realtime_fairness_jain_index.svg`
+- `results/reports/final/` after `package-report`, including `report.md`, `manifest.json`, `reproducibility.md`, `artifacts/*.json`, and `figures/*.svg`
 
 Fairness and coexistence runs are a separate experiment family. The harness now supports an optional concurrent competitor flow per run and records the competitor report plus fairness metrics in the suite summary and comparison export. A practical local smoke config is `configs/harness/local_live_immediate_amc_bbr_coexistence.json`.
 Fairness and coexistence are mandatory final evidence for the repository, but the currently canonical VPS path is `configs/harness/vps_host_live_coexistence_bbr_guardrail.json`. The legacy docker-runner-oriented `configs/harness/vps_live_coexistence_bbr_guardrail.json` remains non-canonical and unsupported under the current runner until the host-veth path can launch both foreground and competitor clients in one suite.
@@ -287,6 +303,7 @@ See the project notes under `docs/`:
 - [docs/amc-milestone.md](docs/amc-milestone.md) for the frozen AMC v1 completion boundary and evidence reading
 - [docs/evidence-freeze.md](docs/evidence-freeze.md) for the frozen Phase 5 artifact inventory and reproduction contract
 - [docs/evaluation.md](docs/evaluation.md) for benchmark questions and metrics
+- [docs/final-report.md](docs/final-report.md) for the final reviewer-readable report bound to the frozen evidence set
 - [docs/methodology.md](docs/methodology.md) for the consolidated experiment plan
 
 ## Data pipeline

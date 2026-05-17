@@ -72,6 +72,16 @@ Phase 6 turns the frozen processed evidence into the final SVG figure set withou
 - the validated Phase 6 output set contains `39` SVGs covering live and VOD usefulness, deadline miss rate, throughput, delivery latency, jitter, live age of information, VOD startup delay, VOD rebuffer ratio, foreground throughput share, fairness throughput ratio, and Jain fairness index
 - local parity, workflow-validation, and exploratory outputs remain excluded from the final figure path even though the generic plotter can still render them for support work
 
+## Phase 7 Report Package
+
+Phase 7 binds the frozen evidence and frozen figures into one reviewer-readable Markdown-first report workflow.
+
+- the canonical report is now versioned at `docs/final-report.md`
+- the validated package command is `cargo run -p harness -- package-report --report docs/final-report.md --matrix-comparison results/processed/harness/vps_fixed_preset_controller_matrix_comparison.json --fairness-comparison results/processed/harness/vps_host_live_coexistence_bbr_guardrail_comparison.json --figure-dir results/figures/harness --output-dir results/reports/final`
+- the generated package contains a packaged report copy, the four canonical processed artifacts, the 39 frozen figures, a manifest, and reproducibility notes under `results/reports/final/`
+- the package validator rejects missing canonical figures or non-canonical suite inputs rather than silently widening the report boundary
+- report output remains Markdown-only in this phase; richer export formats remain outside the frozen Phase 7 scope
+
 ## Workload model
 
 The implementation should stay trace-driven. Use `ffmpeg` and `ffprobe` offline to turn open source clips into replayable segment sets and timing manifests rather than embedding a full player or media pipeline in the Quinn client.
@@ -306,6 +316,7 @@ Current validated outputs from the Linux VPS path:
 - suite summary JSON under `results/processed/harness/*_summary.json`
 - suite comparison JSON under `results/processed/harness/*_comparison.json`
 - suite-prefixed final SVG figures under `results/figures/harness/` after plotting the two canonical comparison exports
+- report package outputs under `results/reports/final/` after packaging the canonical report and frozen evidence set
 
 ## Reporting structure
 
@@ -321,5 +332,7 @@ The report should follow a compact systems-paper structure:
 8. Conclusion and future work
 
 The final report package should bind the frozen configs, exact reproduction commands, processed summaries and comparisons, required figures, bounded interpretation, and reproducibility notes into one reviewer-readable deliverable.
+
+The validated Phase 7 deliverables are the versioned report in `docs/final-report.md` and the generated package assembled by `package-report`.
 
 The frozen evidence inventory and include/exclude rules for that package are recorded in [docs/evidence-freeze.md](docs/evidence-freeze.md).

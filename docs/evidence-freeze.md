@@ -105,6 +105,29 @@ cargo run -p harness -- plot-suite --comparison results/processed/harness/vps_ho
 - The fixed matrix contributes usefulness, deadline miss rate, throughput, delivery latency, jitter, live age of information, VOD startup delay, and VOD rebuffer ratio figures.
 - The fairness guardrail contributes the live transport and usefulness figures plus foreground throughput share, fairness throughput ratio, and Jain fairness index.
 
+## Phase 7 Report Contract
+
+### Canonical report inputs
+
+- `docs/final-report.md`
+- `results/processed/harness/vps_fixed_preset_controller_matrix_comparison.json`
+- `results/processed/harness/vps_host_live_coexistence_bbr_guardrail_comparison.json`
+- `results/figures/harness/` containing the validated 39-figure Phase 6 inventory
+
+### Canonical report-package command
+
+```powershell
+cargo run -p harness -- package-report --report docs/final-report.md --matrix-comparison results/processed/harness/vps_fixed_preset_controller_matrix_comparison.json --fairness-comparison results/processed/harness/vps_host_live_coexistence_bbr_guardrail_comparison.json --figure-dir results/figures/harness --output-dir results/reports/final
+```
+
+### Validated Phase 7 package outputs
+
+- `results/reports/final/report.md`
+- `results/reports/final/manifest.json`
+- `results/reports/final/reproducibility.md`
+- `results/reports/final/artifacts/*.json` for the four canonical processed artifacts
+- `results/reports/final/figures/*.svg` for the 39 frozen figures
+
 ## Frozen Interpretation Summary
 
 ### Live single-flow matrix
@@ -130,5 +153,6 @@ cargo run -p harness -- plot-suite --comparison results/processed/harness/vps_ho
 - Phase 6 should generate figures only from the canonical processed artifacts in this note unless a later phase explicitly reopens the evidence boundary.
 - Later figure reruns should use the canonical figure commands above and keep the suite-prefixed naming convention intact.
 - Phase 7 should build the report package around the same canonical artifacts and the same bounded claim.
+- Later report reruns should use the canonical `package-report` command above and should not substitute local parity, workflow-validation, or exploratory outputs into the package.
 - Phase 8 should choose a showcase raw report from the frozen evidence family, not from workflow-validation or exploratory outputs.
 - Phase 9 should validate the final artifact set against this freeze note instead of re-deciding what counts as evidence.

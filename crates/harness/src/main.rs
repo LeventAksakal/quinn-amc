@@ -2,6 +2,7 @@ mod analysis;
 mod config;
 mod network;
 mod plot;
+mod report;
 mod tui_demo;
 
 use std::{
@@ -24,6 +25,7 @@ use demo_client::{Args as ClientArgs, inspect_replay_input, prepare_replay_input
 use demo_server::{SuiteServer, TransferReport};
 use network::{apply_network_scenario, validate_network_scenario_for_run};
 use plot::plot_comparison_export;
+use report::package_report;
 use sha2::{Digest, Sha256};
 use tokio::{fs, task::JoinHandle};
 use tracing::{info, warn};
@@ -48,6 +50,24 @@ enum Command {
         #[arg(long)]
         comparison: PathBuf,
         #[arg(long, default_value = "results/figures/harness")]
+        output_dir: PathBuf,
+    },
+    PackageReport {
+        #[arg(long, default_value = "docs/final-report.md")]
+        report: PathBuf,
+        #[arg(
+            long,
+            default_value = "results/processed/harness/vps_fixed_preset_controller_matrix_comparison.json"
+        )]
+        matrix_comparison: PathBuf,
+        #[arg(
+            long,
+            default_value = "results/processed/harness/vps_host_live_coexistence_bbr_guardrail_comparison.json"
+        )]
+        fairness_comparison: PathBuf,
+        #[arg(long, default_value = "results/figures/harness")]
+        figure_dir: PathBuf,
+        #[arg(long, default_value = "results/reports/final")]
         output_dir: PathBuf,
     },
     LiveDemo {
@@ -96,6 +116,31 @@ async fn main() -> Result<()> {
             for output in outputs {
                 info!(figure = %path_relative_to(&workspace_root, &output), "harness figure written");
             }
+        }
+        Command::PackageReport {
+            report,
+            matrix_comparison,
+            fairness_comparison,
+            figure_dir,
+            output_dir,
+        } => {
+            let report_path = resolve_path(&workspace_root, &report);
+            let matrix_comparison_path = resolve_path(&workspace_root, &matrix_comparison);
+            let fairness_comparison_path = resolve_path(&workspace_root, &fairness_comparison);
+            let figure_dir = resolve_path(&workspace_root, &figure_dir);
+            let output_dir = resolve_path(&workspace_root, &output_dir);
+            let packaged = package_report(
+                &workspace_root,
+                &report_path,
+                &matrix_comparison_path,
+                &fairness_comparison_path,
+                &figure_dir,
+                &output_dir,
+            )
+            .await?;
+            info!(report = %path_relative_to(&workspace_root, &packaged.report_path), "report package written");
+            info!(manifest = %path_relative_to(&workspace_root, &packaged.manifest_path), "report package manifest written");
+            info!(reproducibility = %path_relative_to(&workspace_root, &packaged.reproducibility_path), figures = packaged.figure_count, output_dir = %path_relative_to(&workspace_root, &packaged.output_dir), "report package completed");
         }
         Command::LiveDemo { report, speed } => {
             let report_path = resolve_path(&workspace_root, &report);
