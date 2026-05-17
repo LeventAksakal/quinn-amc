@@ -60,6 +60,14 @@ Phase 5 freezes the benchmark evidence set around the two canonical VPS suites a
 
 See [docs/evidence-freeze.md](docs/evidence-freeze.md) for the exact included artifacts, excluded outputs, and reproduction commands that later phases must consume.
 
+## Phase 6 Figure System
+
+Phase 6 completes the final SVG figure set from the frozen Phase 5 comparison exports.
+
+- the canonical figure workflow now renders only from `results/processed/harness/vps_fixed_preset_controller_matrix_comparison.json` and `results/processed/harness/vps_host_live_coexistence_bbr_guardrail_comparison.json`
+- figure outputs under `results/figures/harness/` are now suite-prefixed so the fixed matrix and fairness guardrail families can live in one directory without collisions
+- the validated final figure set contains `39` SVGs spanning live and VOD usefulness, deadline miss rate, throughput, delivery latency, jitter, live average age of information, VOD startup delay, VOD rebuffer ratio, foreground throughput share, fairness throughput ratio, and Jain fairness index
+
 ## Config Status
 
 | Status | Configs | Current role |
@@ -191,6 +199,13 @@ sudo ./target/debug/harness run-suite --config configs/harness/vps_host_live_coe
 sudo chown -R "$USER":"$USER" results
 ```
 
+Frozen final-evidence figure workflow:
+
+```powershell
+cargo run -p harness -- plot-suite --comparison results/processed/harness/vps_fixed_preset_controller_matrix_comparison.json --output-dir results/figures/harness
+cargo run -p harness -- plot-suite --comparison results/processed/harness/vps_host_live_coexistence_bbr_guardrail_comparison.json --output-dir results/figures/harness
+```
+
 The first command is the canonical single-flow matrix path. The second command sequence is the canonical fairness guardrail path. They intentionally use different execution modes in the current repository because `run_linux_vps_suite.sh` is still single-client only.
 
 The compose VPS runner now rejects configs that contain `runs[*].coexistence` and validates the referenced replay manifest before launching any container work. That preflight checks the manifest file itself, the init segment, every referenced media segment, each declared `size_bytes`, and whether the manifest is stale relative to any referenced segment payload.
@@ -221,7 +236,7 @@ Direct harness behavior is split intentionally:
 
 - `cargo run -p harness -- run-suite --config ...` generates raw reports and processed outputs
 - `cargo run -p harness -- analyze-suite --config ...` only analyzes already-existing raw reports, skips missing matrix cells, and fails only if no raw reports are available at all
-- `cargo run -p harness -- plot-suite --comparison ...` renders SVG figures from a comparison export into `results/figures/harness/`
+- `cargo run -p harness -- plot-suite --comparison ... --output-dir results/figures/harness` renders suite-prefixed overview and scenario-grouped SVG figures from a comparison export
 - `cargo run -p harness -- live-demo --report ...` replays a raw report in a ratatui dashboard so the controller and utility signals can be inspected live
 
 The suite run path now avoids several fixed per-cell costs:
@@ -244,7 +259,7 @@ Expected VPS outputs:
 - `results/processed/harness/*_amc.json`
 - `results/processed/harness/*_summary.json`
 - `results/processed/harness/*_comparison.json`
-- `results/figures/harness/*.svg` after `plot-suite`, including matrix-aware files such as `live_realtime_throughput_mbps.svg` and `vod_realtime_useful_media_ratio.svg`
+- `results/figures/harness/*.svg` after plotting the two canonical comparison exports, including suite-aware files such as `vps_fixed_preset_controller_matrix_overview_throughput_mbps.svg` and `vps_host_live_coexistence_bbr_guardrail_live_realtime_fairness_jain_index.svg`
 
 Fairness and coexistence runs are a separate experiment family. The harness now supports an optional concurrent competitor flow per run and records the competitor report plus fairness metrics in the suite summary and comparison export. A practical local smoke config is `configs/harness/local_live_immediate_amc_bbr_coexistence.json`.
 Fairness and coexistence are mandatory final evidence for the repository, but the currently canonical VPS path is `configs/harness/vps_host_live_coexistence_bbr_guardrail.json`. The legacy docker-runner-oriented `configs/harness/vps_live_coexistence_bbr_guardrail.json` remains non-canonical and unsupported under the current runner until the host-veth path can launch both foreground and competitor clients in one suite.
@@ -350,7 +365,7 @@ The controller set is intentionally limited to Quinn's current built-ins plus AM
 - `bbr` via `quinn::congestion::BbrConfig`
 - `amc_preview` as the only custom controller in this repository
 
-The comparison export now includes workload-oriented metrics such as throughput, delivery latency, jitter, deadline miss rate, and live average age of information. Partial controller matrices are preserved in the export with explicit `missing_controllers` metadata instead of aborting the entire analysis pass. The plotter keeps overview charts and also emits scenario-grouped controller comparison figures per mode and pace so fixed-preset suites produce figure-ready outputs directly.
+The comparison export now includes workload-oriented metrics such as throughput, delivery latency, jitter, deadline miss rate, and live average age of information. Partial controller matrices are preserved in the export with explicit `missing_controllers` metadata instead of aborting the entire analysis pass. The plotter keeps suite-prefixed overview charts and scenario-grouped controller comparison figures per mode and pace, and fairness-enabled comparison exports also emit throughput-share, throughput-ratio, and Jain-fairness figures.
 
 For VOD, the processed comparison export now also records continuity-oriented metrics from a simple buffered playout model: startup delay, rebuffer count, rebuffer duration, and rebuffer ratio. This keeps VOD comparisons informative even when all controllers eventually deliver every segment.
 

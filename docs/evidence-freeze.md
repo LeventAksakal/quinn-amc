@@ -88,6 +88,23 @@ sudo chown -R "$USER":"$USER" results
 
 These are the only reproduction commands Phase 5 freezes as part of the final evidence contract.
 
+## Phase 6 Figure Contract
+
+### Canonical figure commands
+
+```powershell
+cargo run -p harness -- plot-suite --comparison results/processed/harness/vps_fixed_preset_controller_matrix_comparison.json --output-dir results/figures/harness
+cargo run -p harness -- plot-suite --comparison results/processed/harness/vps_host_live_coexistence_bbr_guardrail_comparison.json --output-dir results/figures/harness
+```
+
+### Validated Phase 6 figure outputs
+
+- The validated final figure directory contains `39` suite-prefixed SVGs under `results/figures/harness/`.
+- Fixed-matrix figure names follow `vps_fixed_preset_controller_matrix_overview_<metric>.svg` or `vps_fixed_preset_controller_matrix_<mode>_<pace>_<metric>.svg`.
+- Fairness-guardrail figure names follow `vps_host_live_coexistence_bbr_guardrail_overview_<metric>.svg` or `vps_host_live_coexistence_bbr_guardrail_<mode>_<pace>_<metric>.svg`.
+- The fixed matrix contributes usefulness, deadline miss rate, throughput, delivery latency, jitter, live age of information, VOD startup delay, and VOD rebuffer ratio figures.
+- The fairness guardrail contributes the live transport and usefulness figures plus foreground throughput share, fairness throughput ratio, and Jain fairness index.
+
 ## Frozen Interpretation Summary
 
 ### Live single-flow matrix
@@ -111,6 +128,7 @@ These are the only reproduction commands Phase 5 freezes as part of the final ev
 ## Rules For Later Phases
 
 - Phase 6 should generate figures only from the canonical processed artifacts in this note unless a later phase explicitly reopens the evidence boundary.
+- Later figure reruns should use the canonical figure commands above and keep the suite-prefixed naming convention intact.
 - Phase 7 should build the report package around the same canonical artifacts and the same bounded claim.
 - Phase 8 should choose a showcase raw report from the frozen evidence family, not from workflow-validation or exploratory outputs.
 - Phase 9 should validate the final artifact set against this freeze note instead of re-deciding what counts as evidence.

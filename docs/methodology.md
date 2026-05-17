@@ -62,6 +62,16 @@ Phase 5 keeps the workflow model and controller boundary fixed, then freezes the
 
 The current workspace therefore freezes the processed VPS evidence locally while continuing to rely on the validated VPS handoff note for the authoritative remote source location of the copied VPS artifacts.
 
+## Phase 6 Figure System
+
+Phase 6 turns the frozen processed evidence into the final SVG figure set without reopening the benchmark boundary.
+
+- the only canonical figure inputs are `results/processed/harness/vps_fixed_preset_controller_matrix_comparison.json` and `results/processed/harness/vps_host_live_coexistence_bbr_guardrail_comparison.json`
+- the validated figure directory is `results/figures/harness/`, populated by running `plot-suite` once per canonical comparison export
+- figure names are suite-prefixed so the fixed matrix and fairness guardrail outputs can coexist without accidental overwrite
+- the validated Phase 6 output set contains `39` SVGs covering live and VOD usefulness, deadline miss rate, throughput, delivery latency, jitter, live age of information, VOD startup delay, VOD rebuffer ratio, foreground throughput share, fairness throughput ratio, and Jain fairness index
+- local parity, workflow-validation, and exploratory outputs remain excluded from the final figure path even though the generic plotter can still render them for support work
+
 ## Workload model
 
 The implementation should stay trace-driven. Use `ffmpeg` and `ffprobe` offline to turn open source clips into replayable segment sets and timing manifests rather than embedding a full player or media pipeline in the Quinn client.
@@ -295,6 +305,7 @@ Current validated outputs from the Linux VPS path:
 - per-run AMC analysis JSON under `results/processed/harness/`
 - suite summary JSON under `results/processed/harness/*_summary.json`
 - suite comparison JSON under `results/processed/harness/*_comparison.json`
+- suite-prefixed final SVG figures under `results/figures/harness/` after plotting the two canonical comparison exports
 
 ## Reporting structure
 

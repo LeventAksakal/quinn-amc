@@ -69,6 +69,16 @@ Phase 5 resolves the benchmark freeze boundary by naming one exact evidence set 
 - Local parity, workflow-validation, and exploratory outputs remain documented support surfaces, not part of the final evidence claim.
 - The evidence freeze point remains inside the Phase 4 AMC v1 claim: constrained-live gains against the loss-based baselines, fairness safety against BBR, and honest VOD limitations.
 
+## Phase 6 Resolution
+
+Phase 6 resolves the final figure system around the frozen Phase 5 artifacts instead of the wider `results/` tree.
+
+- The canonical figure inputs are the two frozen comparison exports: `results/processed/harness/vps_fixed_preset_controller_matrix_comparison.json` and `results/processed/harness/vps_host_live_coexistence_bbr_guardrail_comparison.json`.
+- The validated final figure directory is `results/figures/harness/`, generated from those two inputs with suite-prefixed file names so canonical matrix plots and fairness plots cannot overwrite each other.
+- The fixed-preset matrix figure family now covers live and VOD usefulness, deadline miss rate, throughput, delivery latency, jitter, live age of information, VOD startup delay, and VOD rebuffer ratio.
+- The fairness guardrail figure family now covers the same live transport and usefulness surfaces plus foreground throughput share, throughput ratio, and Jain fairness index.
+- Later phases should consume the Phase 6 figure outputs directly or regenerate them only from the same two canonical comparison exports.
+
 ## Phase Overview
 
 ### Phase 1: Define Done And Freeze Scope

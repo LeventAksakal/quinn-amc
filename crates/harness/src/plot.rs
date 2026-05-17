@@ -41,92 +41,94 @@ fn render_overview_charts(
     output_dir: &Path,
     export: &SuiteComparisonExport,
 ) -> Result<Vec<PathBuf>> {
+    let metrics = [
+        MetricSpec {
+            file_stem: "useful_media_ratio",
+            title: "Useful Media Ratio",
+            unit: "percent",
+            value: metric_useful_media_ratio,
+        },
+        MetricSpec {
+            file_stem: "deadline_miss_rate",
+            title: "Deadline Miss Rate",
+            unit: "percent",
+            value: metric_deadline_miss_rate,
+        },
+        MetricSpec {
+            file_stem: "throughput_mbps",
+            title: "Throughput",
+            unit: "mbps",
+            value: metric_throughput_mbps,
+        },
+        MetricSpec {
+            file_stem: "average_delivery_latency_ms",
+            title: "Average Delivery Latency",
+            unit: "ms",
+            value: metric_average_delivery_latency_ms,
+        },
+        MetricSpec {
+            file_stem: "average_jitter_ms",
+            title: "Average Jitter",
+            unit: "ms",
+            value: metric_average_jitter_ms,
+        },
+        MetricSpec {
+            file_stem: "average_age_of_information_ms",
+            title: "Average Age of Information",
+            unit: "ms",
+            value: metric_average_age_of_information_ms,
+        },
+        MetricSpec {
+            file_stem: "vod_startup_delay_ms",
+            title: "VOD Startup Delay",
+            unit: "ms",
+            value: metric_vod_startup_delay_ms,
+        },
+        MetricSpec {
+            file_stem: "vod_rebuffer_ratio",
+            title: "VOD Rebuffer Ratio",
+            unit: "percent",
+            value: metric_vod_rebuffer_ratio,
+        },
+        MetricSpec {
+            file_stem: "fairness_foreground_throughput_share",
+            title: "Foreground Throughput Share",
+            unit: "percent",
+            value: metric_coexistence_foreground_throughput_share,
+        },
+        MetricSpec {
+            file_stem: "fairness_throughput_ratio",
+            title: "Fairness Throughput Ratio",
+            unit: "ratio",
+            value: metric_coexistence_throughput_ratio,
+        },
+        MetricSpec {
+            file_stem: "fairness_jain_index",
+            title: "Jain Fairness Index",
+            unit: "ratio",
+            value: metric_coexistence_jain_fairness_index,
+        },
+    ];
+
     let mut outputs = Vec::new();
-    outputs.push(render_metric_chart(
-        output_dir,
-        "useful_media_ratio.svg",
-        "Useful Media Ratio",
-        &export
+    for metric in metrics {
+        let rows = export
             .rows
             .iter()
-            .map(|row| (label_for_row(row), row.useful_media_ratio * 100.0))
-            .collect::<Vec<_>>(),
-        "percent",
-    )?);
-    outputs.push(render_metric_chart(
-        output_dir,
-        "deadline_miss_rate.svg",
-        "Deadline Miss Rate",
-        &export
-            .rows
-            .iter()
-            .map(|row| (label_for_row(row), row.deadline_miss_rate * 100.0))
-            .collect::<Vec<_>>(),
-        "percent",
-    )?);
-    outputs.push(render_metric_chart(
-        output_dir,
-        "throughput_mbps.svg",
-        "Throughput Mbps",
-        &export
-            .rows
-            .iter()
-            .map(|row| (label_for_row(row), row.throughput_mbps))
-            .collect::<Vec<_>>(),
-        "mbps",
-    )?);
+            .filter_map(|row| (metric.value)(row).map(|value| (label_for_row(row), value)))
+            .collect::<Vec<_>>();
+        if rows.is_empty() {
+            continue;
+        }
 
-    let live_aoi = export
-        .rows
-        .iter()
-        .filter_map(|row| {
-            row.average_age_of_information_ms
-                .map(|value| (label_for_row(row), value))
-        })
-        .collect::<Vec<_>>();
-    if !live_aoi.is_empty() {
+        let file_name = overview_file_name(export, metric.file_stem);
+        let title = format!("{} Overview: {}", suite_title(&export.suite_name), metric.title);
         outputs.push(render_metric_chart(
             output_dir,
-            "live_average_aoi_ms.svg",
-            "Live Average Age of Information",
-            &live_aoi,
-            "ms",
-        )?);
-    }
-
-    let vod_startup_delay = export
-        .rows
-        .iter()
-        .filter_map(|row| {
-            row.vod_startup_delay_ms
-                .map(|value| (label_for_row(row), value as f64))
-        })
-        .collect::<Vec<_>>();
-    if !vod_startup_delay.is_empty() {
-        outputs.push(render_metric_chart(
-            output_dir,
-            "vod_startup_delay_ms.svg",
-            "VOD Startup Delay",
-            &vod_startup_delay,
-            "ms",
-        )?);
-    }
-
-    let vod_rebuffer_ratio = export
-        .rows
-        .iter()
-        .filter_map(|row| {
-            row.vod_rebuffer_ratio
-                .map(|value| (label_for_row(row), value * 100.0))
-        })
-        .collect::<Vec<_>>();
-    if !vod_rebuffer_ratio.is_empty() {
-        outputs.push(render_metric_chart(
-            output_dir,
-            "vod_rebuffer_ratio.svg",
-            "VOD Rebuffer Ratio",
-            &vod_rebuffer_ratio,
-            "percent",
+            &file_name,
+            &title,
+            &rows,
+            metric.unit,
         )?);
     }
 
@@ -183,6 +185,24 @@ fn render_matrix_charts(output_dir: &Path, export: &SuiteComparisonExport) -> Re
             title: "VOD Rebuffer Ratio",
             unit: "percent",
             value: metric_vod_rebuffer_ratio,
+        },
+        MetricSpec {
+            file_stem: "fairness_foreground_throughput_share",
+            title: "Foreground Throughput Share",
+            unit: "percent",
+            value: metric_coexistence_foreground_throughput_share,
+        },
+        MetricSpec {
+            file_stem: "fairness_throughput_ratio",
+            title: "Fairness Throughput Ratio",
+            unit: "ratio",
+            value: metric_coexistence_throughput_ratio,
+        },
+        MetricSpec {
+            file_stem: "fairness_jain_index",
+            title: "Jain Fairness Index",
+            unit: "ratio",
+            value: metric_coexistence_jain_fairness_index,
         },
     ];
 
@@ -296,12 +316,7 @@ fn render_grouped_metric_chart(
         return Ok(None);
     }
 
-    let file_name = format!(
-        "{}_{}_{}.svg",
-        mode_key(mode),
-        pace_key(pace),
-        metric.file_stem
-    );
+    let file_name = matrix_file_name(export, mode, pace, metric.file_stem);
     let output_path = output_dir.join(file_name);
     let max_value = values.values().copied().fold(0.0_f64, f64::max).max(1.0);
 
@@ -314,7 +329,8 @@ fn render_grouped_metric_chart(
         let mut chart = ChartBuilder::on(&root)
             .caption(
                 format!(
-                    "{} {} by Scenario ({})",
+                    "{}: {} {} by Scenario ({})",
+                    suite_title(&export.suite_name),
                     mode_title(mode),
                     metric.title,
                     pace_key(pace)
@@ -465,6 +481,19 @@ fn metric_vod_rebuffer_ratio(row: &ComparisonRow) -> Option<f64> {
     row.vod_rebuffer_ratio.map(|value| value * 100.0)
 }
 
+fn metric_coexistence_foreground_throughput_share(row: &ComparisonRow) -> Option<f64> {
+    row.coexistence_foreground_throughput_share
+        .map(|value| value * 100.0)
+}
+
+fn metric_coexistence_throughput_ratio(row: &ComparisonRow) -> Option<f64> {
+    row.coexistence_throughput_ratio
+}
+
+fn metric_coexistence_jain_fairness_index(row: &ComparisonRow) -> Option<f64> {
+    row.coexistence_jain_fairness_index
+}
+
 fn mode_key(mode: demo_client::ReplayMode) -> &'static str {
     match mode {
         demo_client::ReplayMode::Vod => "vod",
@@ -529,14 +558,52 @@ fn humanize_scenario(scenario: &str) -> String {
     scenario.replace('_', " ")
 }
 
+fn suite_slug(name: &str) -> String {
+    name.replace('-', "_")
+}
+
+fn suite_title(name: &str) -> String {
+    name.split(['_', '-'])
+        .map(|token| match token {
+            "vps" => "VPS".to_string(),
+            "amc" => "AMC".to_string(),
+            "bbr" => "BBR".to_string(),
+            _ => {
+                let mut chars = token.chars();
+                match chars.next() {
+                    Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                    None => String::new(),
+                }
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn overview_file_name(export: &SuiteComparisonExport, metric: &str) -> String {
+    format!("{}_overview_{}.svg", suite_slug(&export.suite_name), metric)
+}
+
+fn matrix_file_name(
+    export: &SuiteComparisonExport,
+    mode: demo_client::ReplayMode,
+    pace: demo_client::Pace,
+    metric: &str,
+) -> String {
+    format!(
+        "{}_{}_{}_{}.svg",
+        suite_slug(&export.suite_name),
+        mode_key(mode),
+        pace_key(pace),
+        metric
+    )
+}
+
 fn label_for_row(row: &crate::analysis::ComparisonRow) -> String {
     format!(
         "{}:{}:{}",
-        row.network_scenario,
-        match row.mode {
-            demo_client::ReplayMode::Vod => "vod",
-            demo_client::ReplayMode::Live => "live",
-        },
-        controller_key(row.controller)
+        humanize_scenario(&row.network_scenario),
+        mode_key(row.mode),
+        controller_title(controller_key(row.controller))
     )
 }
