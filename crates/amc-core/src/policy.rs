@@ -11,7 +11,7 @@ use quinn::congestion::{Controller, ControllerFactory, ControllerMetrics};
 
 use crate::semantics::{Importance, MediaSemantics, TrafficClass};
 
-const UTILITY_SIGNAL_EWMA_WEIGHT: f64 = 0.35;
+pub const UTILITY_SIGNAL_EWMA_WEIGHT: f64 = 0.35;
 
 fn scale_window_for_mtu(window: u64, old_mtu: u64, new_mtu: u64) -> u64 {
     if old_mtu == 0 || new_mtu == 0 {
@@ -40,6 +40,36 @@ pub struct UtilitySignal {
     pub score: UtilityScore,
     pub ack_gain: f64,
     pub loss_reduction_factor: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AmcControllerPhase {
+    SlowStart,
+    CongestionAvoidance,
+    Recovery,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AmcControllerEvent {
+    Initialized,
+    Ack,
+    Loss,
+    PersistentCongestion,
+    MtuUpdate,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AmcControllerSnapshot {
+    pub phase: AmcControllerPhase,
+    pub last_event: AmcControllerEvent,
+    pub current_mtu_bytes: u64,
+    pub congestion_window_bytes: u64,
+    pub ssthresh_bytes: Option<u64>,
+    pub initial_window_bytes: u64,
+    pub min_window_bytes: u64,
+    pub max_window_bytes: u64,
+    pub class_max_window_bytes: u64,
+    pub growth_step_bytes: u64,
 }
 
 impl UtilitySignal {
@@ -91,6 +121,16 @@ pub struct RuntimeUtilityState {
     score_bits: AtomicU64,
     ack_gain_milli: AtomicU32,
     loss_reduction_milli: AtomicU32,
+    controller_phase_tag: AtomicU8,
+    controller_event_tag: AtomicU8,
+    controller_current_mtu_bytes: AtomicU64,
+    controller_window_bytes: AtomicU64,
+    controller_ssthresh_bytes: AtomicU64,
+    controller_initial_window_bytes: AtomicU64,
+    controller_min_window_bytes: AtomicU64,
+    controller_max_window_bytes: AtomicU64,
+    controller_class_max_window_bytes: AtomicU64,
+    controller_growth_step_bytes: AtomicU64,
 }
 
 impl RuntimeUtilityState {
@@ -153,6 +193,61 @@ impl RuntimeUtilityState {
             loss_reduction_factor: loss_reduction_milli as f64 / 1_000.0,
         }
     }
+
+    pub fn store_controller_snapshot(&self, snapshot: AmcControllerSnapshot) {
+        self.controller_phase_tag
+            .store(controller_phase_tag(snapshot.phase), Ordering::Relaxed);
+        self.controller_event_tag
+            .store(controller_event_tag(snapshot.last_event), Ordering::Relaxed);
+        self.controller_current_mtu_bytes
+            .store(snapshot.current_mtu_bytes, Ordering::Relaxed);
+        self.controller_window_bytes
+            .store(snapshot.congestion_window_bytes, Ordering::Relaxed);
+        self.controller_ssthresh_bytes.store(
+            snapshot.ssthresh_bytes.unwrap_or(u64::MAX),
+            Ordering::Relaxed,
+        );
+        self.controller_initial_window_bytes
+            .store(snapshot.initial_window_bytes, Ordering::Relaxed);
+        self.controller_min_window_bytes
+            .store(snapshot.min_window_bytes, Ordering::Relaxed);
+        self.controller_max_window_bytes
+            .store(snapshot.max_window_bytes, Ordering::Relaxed);
+        self.controller_class_max_window_bytes
+            .store(snapshot.class_max_window_bytes, Ordering::Relaxed);
+        self.controller_growth_step_bytes
+            .store(snapshot.growth_step_bytes, Ordering::Relaxed);
+    }
+
+    pub fn controller_snapshot(&self) -> Option<AmcControllerSnapshot> {
+        let current_mtu_bytes = self.controller_current_mtu_bytes.load(Ordering::Relaxed);
+        let congestion_window_bytes = self.controller_window_bytes.load(Ordering::Relaxed);
+        if current_mtu_bytes == 0 || congestion_window_bytes == 0 {
+            return None;
+        }
+
+        let ssthresh_bytes = self.controller_ssthresh_bytes.load(Ordering::Relaxed);
+        Some(AmcControllerSnapshot {
+            phase: controller_phase_from_tag(
+                self.controller_phase_tag.load(Ordering::Relaxed),
+            ),
+            last_event: controller_event_from_tag(
+                self.controller_event_tag.load(Ordering::Relaxed),
+            ),
+            current_mtu_bytes,
+            congestion_window_bytes,
+            ssthresh_bytes: (ssthresh_bytes != u64::MAX).then_some(ssthresh_bytes),
+            initial_window_bytes: self
+                .controller_initial_window_bytes
+                .load(Ordering::Relaxed),
+            min_window_bytes: self.controller_min_window_bytes.load(Ordering::Relaxed),
+            max_window_bytes: self.controller_max_window_bytes.load(Ordering::Relaxed),
+            class_max_window_bytes: self
+                .controller_class_max_window_bytes
+                .load(Ordering::Relaxed),
+            growth_step_bytes: self.controller_growth_step_bytes.load(Ordering::Relaxed),
+        })
+    }
 }
 
 fn blend_signal(previous: UtilitySignal, current: UtilitySignal, weight: f64) -> UtilitySignal {
@@ -181,6 +276,43 @@ fn traffic_class_from_tag(tag: u8) -> TrafficClass {
     match tag {
         1 => TrafficClass::Vod,
         _ => TrafficClass::Live,
+    }
+}
+
+fn controller_phase_tag(phase: AmcControllerPhase) -> u8 {
+    match phase {
+        AmcControllerPhase::SlowStart => 1,
+        AmcControllerPhase::CongestionAvoidance => 2,
+        AmcControllerPhase::Recovery => 3,
+    }
+}
+
+fn controller_phase_from_tag(tag: u8) -> AmcControllerPhase {
+    match tag {
+        1 => AmcControllerPhase::SlowStart,
+        3 => AmcControllerPhase::Recovery,
+        _ => AmcControllerPhase::CongestionAvoidance,
+    }
+}
+
+fn controller_event_tag(event: AmcControllerEvent) -> u8 {
+    match event {
+        AmcControllerEvent::Initialized => 1,
+        AmcControllerEvent::Ack => 2,
+        AmcControllerEvent::Loss => 3,
+        AmcControllerEvent::PersistentCongestion => 4,
+        AmcControllerEvent::MtuUpdate => 5,
+    }
+}
+
+fn controller_event_from_tag(tag: u8) -> AmcControllerEvent {
+    match tag {
+        1 => AmcControllerEvent::Initialized,
+        2 => AmcControllerEvent::Ack,
+        3 => AmcControllerEvent::Loss,
+        4 => AmcControllerEvent::PersistentCongestion,
+        5 => AmcControllerEvent::MtuUpdate,
+        _ => AmcControllerEvent::Initialized,
     }
 }
 
@@ -262,7 +394,7 @@ impl AmcController {
     ) -> Self {
         let initial_window = initial_window_datagrams * current_mtu;
 
-        Self {
+        let controller = Self {
             runtime_state,
             current_mtu,
             initial_window,
@@ -271,7 +403,9 @@ impl AmcController {
             window: initial_window,
             ssthresh: u64::MAX,
             recovery_start_time: now,
-        }
+        };
+        controller.publish_controller_snapshot(AmcControllerEvent::Initialized, None);
+        controller
     }
 
     fn min_window(&self) -> u64 {
@@ -303,6 +437,35 @@ impl AmcController {
             (additive.round() as u64).max(self.current_mtu / 16)
         }
     }
+
+    fn phase(&self) -> AmcControllerPhase {
+        if self.window < self.ssthresh {
+            AmcControllerPhase::SlowStart
+        } else {
+            AmcControllerPhase::CongestionAvoidance
+        }
+    }
+
+    fn publish_controller_snapshot(
+        &self,
+        last_event: AmcControllerEvent,
+        phase_override: Option<AmcControllerPhase>,
+    ) {
+        let signal = self.runtime_state.snapshot();
+        self.runtime_state
+            .store_controller_snapshot(AmcControllerSnapshot {
+                phase: phase_override.unwrap_or_else(|| self.phase()),
+                last_event,
+                current_mtu_bytes: self.current_mtu,
+                congestion_window_bytes: self.window,
+                ssthresh_bytes: (self.ssthresh != u64::MAX).then_some(self.ssthresh),
+                initial_window_bytes: self.initial_window,
+                min_window_bytes: self.min_window(),
+                max_window_bytes: self.max_window(),
+                class_max_window_bytes: self.class_max_window(signal),
+                growth_step_bytes: self.growth_step(signal),
+            });
+    }
 }
 
 impl Controller for AmcController {
@@ -321,6 +484,7 @@ impl Controller for AmcController {
         let growth = self.growth_step(signal);
         self.window =
             (self.window + growth).clamp(self.min_window(), self.class_max_window(signal));
+        self.publish_controller_snapshot(AmcControllerEvent::Ack, None);
     }
 
     fn on_congestion_event(
@@ -344,6 +508,15 @@ impl Controller for AmcController {
         if is_persistent_congestion {
             self.window = self.min_window();
         }
+
+        self.publish_controller_snapshot(
+            if is_persistent_congestion {
+                AmcControllerEvent::PersistentCongestion
+            } else {
+                AmcControllerEvent::Loss
+            },
+            Some(AmcControllerPhase::Recovery),
+        );
     }
 
     fn on_mtu_update(&mut self, new_mtu: u16) {
@@ -354,6 +527,7 @@ impl Controller for AmcController {
         self.initial_window = scale_window_for_mtu(self.initial_window, old_mtu, self.current_mtu);
         self.window = self.window.clamp(self.min_window(), self.max_window());
         self.ssthresh = self.ssthresh.max(self.min_window());
+        self.publish_controller_snapshot(AmcControllerEvent::MtuUpdate, None);
     }
 
     fn window(&self) -> u64 {
@@ -450,8 +624,8 @@ mod tests {
     use quinn::congestion::{Controller, ControllerFactory};
 
     use super::{
-        AmcControllerConfig, DefaultUtilityScorer, RuntimeUtilityState, UtilityInputs,
-        UtilityScore, UtilityScorer, UtilitySignal,
+        AmcControllerConfig, AmcControllerEvent, AmcControllerPhase, DefaultUtilityScorer,
+        RuntimeUtilityState, UtilityInputs, UtilityScore, UtilityScorer, UtilitySignal,
     };
     use crate::semantics::{Importance, MediaSemantics, TrafficClass};
 
@@ -672,5 +846,47 @@ mod tests {
 
         assert_eq!(controller.window().div_ceil(1_500), datagrams_before);
         assert_eq!(controller.initial_window().div_ceil(1_500), 20);
+    }
+
+    #[test]
+    fn controller_snapshot_exposes_initial_slow_start_state() {
+        let runtime_state = Arc::new(RuntimeUtilityState::default());
+        let now = Instant::now();
+        let factory = Arc::new(
+            AmcControllerConfig::default().with_runtime_state(runtime_state.clone()),
+        );
+        let _controller = factory.build(now, 1_200);
+
+        let snapshot = runtime_state.controller_snapshot().expect("controller snapshot");
+
+        assert_eq!(snapshot.phase, AmcControllerPhase::SlowStart);
+        assert_eq!(snapshot.last_event, AmcControllerEvent::Initialized);
+        assert_eq!(snapshot.current_mtu_bytes, 1_200);
+        assert_eq!(snapshot.congestion_window_bytes, 24_000);
+        assert_eq!(snapshot.ssthresh_bytes, None);
+    }
+
+    #[test]
+    fn controller_snapshot_marks_recovery_after_loss() {
+        let runtime_state = Arc::new(RuntimeUtilityState::default());
+        runtime_state.store_signal(UtilitySignal::from_score(UtilityScore(0.2)));
+
+        let now = Instant::now();
+        let factory = Arc::new(
+            AmcControllerConfig::default().with_runtime_state(runtime_state.clone()),
+        );
+        let mut controller = factory.build(now, 1_200);
+        controller.on_end_acks(now + Duration::from_millis(1), 0, false, Some(1));
+        controller.on_congestion_event(
+            now + Duration::from_millis(3),
+            now + Duration::from_millis(2),
+            false,
+            1_200,
+        );
+
+        let snapshot = runtime_state.controller_snapshot().expect("controller snapshot");
+        assert_eq!(snapshot.phase, AmcControllerPhase::Recovery);
+        assert_eq!(snapshot.last_event, AmcControllerEvent::Loss);
+        assert!(snapshot.ssthresh_bytes.is_some());
     }
 }

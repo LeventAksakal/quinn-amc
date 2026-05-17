@@ -10,7 +10,8 @@ pub mod policy;
 pub mod semantics;
 
 pub use policy::{
-    AmcControllerConfig, DefaultUtilityScorer, RuntimeUtilityState, UtilityInputs, UtilityScore,
-    UtilityScorer, UtilitySignal,
+    AmcControllerConfig, AmcControllerEvent, AmcControllerPhase, AmcControllerSnapshot,
+    DefaultUtilityScorer, RuntimeUtilityState, UtilityInputs, UtilityScore,
+    UtilityScorer, UtilitySignal, UTILITY_SIGNAL_EWMA_WEIGHT,
 };
 pub use semantics::{DependencyDepth, Importance, MediaSemantics, TrafficClass};

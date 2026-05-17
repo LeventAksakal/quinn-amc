@@ -7,8 +7,9 @@ use std::{
 };
 
 use amc_core::{
-    AmcControllerConfig, DefaultUtilityScorer, Importance, MediaSemantics, RuntimeUtilityState,
-    TrafficClass, UtilityInputs, UtilityScorer,
+    AmcControllerConfig, AmcControllerEvent, AmcControllerPhase, AmcControllerSnapshot,
+    DefaultUtilityScorer, Importance, MediaSemantics, RuntimeUtilityState, TrafficClass,
+    UTILITY_SIGNAL_EWMA_WEIGHT, UtilityInputs, UtilityScorer, UtilitySignal,
 };
 use anyhow::{Context, Result, anyhow};
 use clap::{Parser, ValueEnum};
@@ -168,8 +169,39 @@ pub struct RuntimeUtilityTelemetry {
     pub queue_delay_ms: u64,
     pub estimated_rtt_ms: u64,
     pub utility_score: f64,
+    #[serde(default)]
+    pub observed_utility_score: Option<f64>,
+    #[serde(default)]
+    pub smoothed_utility_score: Option<f64>,
+    #[serde(default)]
+    pub ewma_weight: Option<f64>,
     pub ack_gain: f64,
     pub loss_reduction_factor: f64,
+    #[serde(default)]
+    pub controller_snapshot: Option<AmcControllerSnapshotTelemetry>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct AmcControllerSnapshotTelemetry {
+    pub phase: String,
+    pub last_event: String,
+    pub current_mtu_bytes: u64,
+    pub congestion_window_bytes: u64,
+    pub congestion_window_datagrams: u64,
+    #[serde(default)]
+    pub ssthresh_bytes: Option<u64>,
+    #[serde(default)]
+    pub ssthresh_datagrams: Option<u64>,
+    pub initial_window_bytes: u64,
+    pub initial_window_datagrams: u64,
+    pub min_window_bytes: u64,
+    pub min_window_datagrams: u64,
+    pub max_window_bytes: u64,
+    pub max_window_datagrams: u64,
+    pub class_max_window_bytes: u64,
+    pub class_max_window_datagrams: u64,
+    pub growth_step_bytes: u64,
+    pub growth_step_datagrams: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -991,15 +1023,17 @@ fn update_runtime_utility(
     let dependency_ready = derive_dependency_ready(profile, queue_delay_ms, freshness_window_ms);
     semantics = semantics.with_freshness_window(Duration::from_millis(freshness_window_ms));
 
-    let signal = runtime_utility.update_from_inputs(
-        &DefaultUtilityScorer,
-        &UtilityInputs {
-            semantics,
-            queue_delay: Duration::from_millis(queue_delay_ms),
-            estimated_rtt,
-            dependency_ready,
-        },
+    let inputs = UtilityInputs {
+        semantics: semantics.clone(),
+        queue_delay: Duration::from_millis(queue_delay_ms),
+        estimated_rtt,
+        dependency_ready,
+    };
+    let observed_signal = UtilitySignal::from_score_for_traffic_class(
+        traffic_class,
+        DefaultUtilityScorer.score(&inputs),
     );
+    let signal = runtime_utility.update_from_inputs(&DefaultUtilityScorer, &inputs);
 
     RuntimeUtilityTelemetry {
         traffic_class,
@@ -1009,8 +1043,60 @@ fn update_runtime_utility(
         queue_delay_ms,
         estimated_rtt_ms: estimated_rtt.as_millis() as u64,
         utility_score: signal.score.0,
+        observed_utility_score: Some(observed_signal.score.0),
+        smoothed_utility_score: Some(signal.score.0),
+        ewma_weight: Some(UTILITY_SIGNAL_EWMA_WEIGHT),
         ack_gain: signal.ack_gain,
         loss_reduction_factor: signal.loss_reduction_factor,
+        controller_snapshot: runtime_utility
+            .controller_snapshot()
+            .map(amc_controller_snapshot_telemetry),
+    }
+}
+
+fn amc_controller_snapshot_telemetry(
+    snapshot: AmcControllerSnapshot,
+) -> AmcControllerSnapshotTelemetry {
+    let current_mtu_bytes = snapshot.current_mtu_bytes.max(1);
+
+    AmcControllerSnapshotTelemetry {
+        phase: amc_controller_phase_label(snapshot.phase).to_string(),
+        last_event: amc_controller_event_label(snapshot.last_event).to_string(),
+        current_mtu_bytes,
+        congestion_window_bytes: snapshot.congestion_window_bytes,
+        congestion_window_datagrams: snapshot.congestion_window_bytes.div_ceil(current_mtu_bytes),
+        ssthresh_bytes: snapshot.ssthresh_bytes,
+        ssthresh_datagrams: snapshot
+            .ssthresh_bytes
+            .map(|value| value.div_ceil(current_mtu_bytes)),
+        initial_window_bytes: snapshot.initial_window_bytes,
+        initial_window_datagrams: snapshot.initial_window_bytes.div_ceil(current_mtu_bytes),
+        min_window_bytes: snapshot.min_window_bytes,
+        min_window_datagrams: snapshot.min_window_bytes.div_ceil(current_mtu_bytes),
+        max_window_bytes: snapshot.max_window_bytes,
+        max_window_datagrams: snapshot.max_window_bytes.div_ceil(current_mtu_bytes),
+        class_max_window_bytes: snapshot.class_max_window_bytes,
+        class_max_window_datagrams: snapshot.class_max_window_bytes.div_ceil(current_mtu_bytes),
+        growth_step_bytes: snapshot.growth_step_bytes,
+        growth_step_datagrams: snapshot.growth_step_bytes.div_ceil(current_mtu_bytes),
+    }
+}
+
+fn amc_controller_phase_label(phase: AmcControllerPhase) -> &'static str {
+    match phase {
+        AmcControllerPhase::SlowStart => "slow_start",
+        AmcControllerPhase::CongestionAvoidance => "congestion_avoidance",
+        AmcControllerPhase::Recovery => "recovery",
+    }
+}
+
+fn amc_controller_event_label(event: AmcControllerEvent) -> &'static str {
+    match event {
+        AmcControllerEvent::Initialized => "initialized",
+        AmcControllerEvent::Ack => "ack",
+        AmcControllerEvent::Loss => "loss",
+        AmcControllerEvent::PersistentCongestion => "persistent_congestion",
+        AmcControllerEvent::MtuUpdate => "mtu_update",
     }
 }
 
@@ -1223,7 +1309,11 @@ async fn read_payload_bytes(
 
 #[cfg(test)]
 mod tests {
-    use super::inspect_replay_input;
+    use super::{
+        AmcControllerSnapshotTelemetry, BaselineController, ReplayMode, RuntimeUtilityTelemetry,
+        SegmentHeader, SegmentKind, inspect_replay_input,
+    };
+    use amc_core::{Importance, TrafficClass};
     use anyhow::Result;
     use serde_json::json;
     use std::{
@@ -1313,5 +1403,71 @@ mod tests {
 
         stdfs::remove_dir_all(&root)?;
         Ok(())
+    }
+
+    #[test]
+    fn segment_header_bincode_round_trip_preserves_amc_snapshot_telemetry() {
+        let header = SegmentHeader {
+            asset_name: "test_asset".to_string(),
+            baseline_controller: BaselineController::AmcPreview,
+            mode: ReplayMode::Live,
+            kind: SegmentKind::Media,
+            sequence: 7,
+            start_time_ms: 120,
+            duration_ms: 1_000,
+            deadline_ms: 900,
+            client_send_elapsed_ms: 123,
+            payload_len: 4_096,
+            segment_path: "test_asset_chunk_00007.m4s".to_string(),
+            runtime_utility: Some(RuntimeUtilityTelemetry {
+                traffic_class: TrafficClass::Live,
+                importance: Importance::High,
+                dependency_depth: 1,
+                dependency_ready: true,
+                queue_delay_ms: 12,
+                estimated_rtt_ms: 44,
+                utility_score: 0.01,
+                observed_utility_score: Some(0.012),
+                smoothed_utility_score: Some(0.01),
+                ewma_weight: Some(0.35),
+                ack_gain: 1.2,
+                loss_reduction_factor: 0.65,
+                controller_snapshot: Some(AmcControllerSnapshotTelemetry {
+                    phase: "congestion_avoidance".to_string(),
+                    last_event: "ack".to_string(),
+                    current_mtu_bytes: 1_200,
+                    congestion_window_bytes: 48_000,
+                    congestion_window_datagrams: 40,
+                    ssthresh_bytes: Some(24_000),
+                    ssthresh_datagrams: Some(20),
+                    initial_window_bytes: 24_000,
+                    initial_window_datagrams: 20,
+                    min_window_bytes: 4_800,
+                    min_window_datagrams: 4,
+                    max_window_bytes: 480_000,
+                    max_window_datagrams: 400,
+                    class_max_window_bytes: 192_000,
+                    class_max_window_datagrams: 160,
+                    growth_step_bytes: 1_200,
+                    growth_step_datagrams: 1,
+                }),
+            }),
+        };
+
+        let encoded = bincode::serde::encode_to_vec(&header, bincode::config::standard())
+            .expect("segment header encode");
+        let (decoded, _): (SegmentHeader, usize) =
+            bincode::serde::decode_from_slice(&encoded, bincode::config::standard())
+                .expect("segment header decode");
+
+        let runtime = decoded.runtime_utility.expect("runtime utility");
+        let snapshot = runtime.controller_snapshot.expect("controller snapshot");
+        assert_eq!(runtime.observed_utility_score, Some(0.012));
+        assert_eq!(runtime.smoothed_utility_score, Some(0.01));
+        assert_eq!(runtime.ewma_weight, Some(0.35));
+        assert_eq!(snapshot.phase, "congestion_avoidance");
+        assert_eq!(snapshot.last_event, "ack");
+        assert_eq!(snapshot.congestion_window_datagrams, 40);
+        assert_eq!(snapshot.ssthresh_datagrams, Some(20));
     }
 }

@@ -78,21 +78,36 @@ This panel exposes only telemetry that is already stored in the raw report:
 - dependency ready state
 - queue delay
 - estimated RTT
-- utility score
+- observed utility score
+- smoothed utility score
+- EWMA weight
 - ack gain
 - loss reduction factor
+
+### AMC Controller Snapshot
+
+When the raw report was generated with the current telemetry schema, the demo also shows the AMC controller snapshot persisted by the sender-side congestion controller bridge:
+
+- controller phase
+- last controller event
+- congestion window
+- slow-start threshold
+- growth step
+- current MTU
+- initial, minimum, configured maximum, and class maximum windows
 
 ### Trend Panels
 
 - utility score over time
-- delivery latency over time
+- congestion window over time
 - positive deadline miss over time
 
 ## Interpretation Notes
 
 - `useful` means the segment still had value when it arrived at the receiver.
 - A positive `lateness_ms` means the segment missed its deadline.
-- `ack_gain` and `loss_reduction_factor` are AMC runtime telemetry values already recorded in the raw report; the demo does not infer deeper controller state beyond those fields.
+- `ack_gain` and `loss_reduction_factor` are AMC runtime telemetry values already recorded in the raw report.
+- The controller snapshot is report-backed, not inferred from post hoc analysis. Older raw reports may lack it even if they already contain the AMC signal fields.
 - The viewer is single-run only by design. It is not intended to become a comparative multi-controller lab.
 
 ## Scope Boundary

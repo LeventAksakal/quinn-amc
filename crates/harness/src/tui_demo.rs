@@ -99,37 +99,75 @@ fn run_app(
 
             let middle = Layout::default()
                 .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(52), Constraint::Percentage(48)])
-                .split(areas[2]);
-            frame.render_widget(current_observation_panel(current), middle[0]);
-            frame.render_widget(runtime_telemetry_panel(current), middle[1]);
-
-            let bottom = Layout::default()
-                .direction(Direction::Horizontal)
                 .constraints([
                     Constraint::Percentage(34),
                     Constraint::Percentage(33),
                     Constraint::Percentage(33),
                 ])
+                .split(areas[2]);
+            frame.render_widget(current_observation_panel(current), middle[0]);
+            frame.render_widget(runtime_telemetry_panel(current), middle[1]);
+            frame.render_widget(controller_snapshot_panel(current), middle[2]);
+
+            let bottom = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(25),
+                    Constraint::Percentage(25),
+                    Constraint::Percentage(25),
+                    Constraint::Percentage(25),
+                ])
                 .split(areas[3]);
 
-            let utility_points = media
+            let observed_utility_points = media
                 .iter()
                 .take(step + 1)
                 .map(|observation| {
                     observation
                         .runtime_utility
                         .as_ref()
-                        .map(|runtime| (runtime.utility_score * 1000.0).round() as u64)
+                        .and_then(|runtime| runtime.observed_utility_score)
+                        .map(|value| (value * 1000.0).round() as u64)
+                        .or_else(|| {
+                            observation
+                                .runtime_utility
+                                .as_ref()
+                                .map(|runtime| (runtime.utility_score * 1000.0).round() as u64)
+                        })
                         .unwrap_or(0)
                 })
                 .collect::<Vec<_>>();
-            let latency_points = media
+            let smoothed_utility_points = media
                 .iter()
                 .take(step + 1)
-                .map(|observation| delivery_latency_ms(observation))
+                .map(|observation| {
+                    observation
+                        .runtime_utility
+                        .as_ref()
+                        .and_then(|runtime| runtime.smoothed_utility_score)
+                        .map(|value| (value * 1000.0).round() as u64)
+                        .or_else(|| {
+                            observation
+                                .runtime_utility
+                                .as_ref()
+                                .map(|runtime| (runtime.utility_score * 1000.0).round() as u64)
+                        })
+                        .unwrap_or(0)
+                })
                 .collect::<Vec<_>>();
-            let lateness_points = media
+            let cwnd_points = media
+                .iter()
+                .take(step + 1)
+                .map(|observation| {
+                    observation
+                        .runtime_utility
+                        .as_ref()
+                        .and_then(|runtime| runtime.controller_snapshot.as_ref())
+                        .map(|snapshot| snapshot.congestion_window_datagrams)
+                        .unwrap_or(0)
+                })
+                .collect::<Vec<_>>();
+            let deadline_miss_points = media
                 .iter()
                 .take(step + 1)
                 .map(|observation| observation.lateness_ms.max(0) as u64)
@@ -139,23 +177,34 @@ fn run_app(
                 Sparkline::default()
                     .block(
                         Block::default()
-                            .title("Utility Score x1000")
+                            .title("Observed Utility x1000")
                             .borders(Borders::ALL),
                     )
-                    .data(&utility_points)
-                    .style(Style::default().fg(Color::Green)),
+                    .data(&observed_utility_points)
+                    .style(Style::default().fg(Color::Blue)),
                 bottom[0],
             );
             frame.render_widget(
                 Sparkline::default()
                     .block(
                         Block::default()
-                            .title("Delivery Latency ms")
+                            .title("Smoothed Utility x1000")
                             .borders(Borders::ALL),
                     )
-                    .data(&latency_points)
-                    .style(Style::default().fg(Color::Yellow)),
+                    .data(&smoothed_utility_points)
+                    .style(Style::default().fg(Color::Green)),
                 bottom[1],
+            );
+            frame.render_widget(
+                Sparkline::default()
+                    .block(
+                        Block::default()
+                            .title("CWND Datagrams")
+                            .borders(Borders::ALL),
+                    )
+                    .data(&cwnd_points)
+                    .style(Style::default().fg(Color::Yellow)),
+                bottom[2],
             );
             frame.render_widget(
                 Sparkline::default()
@@ -164,9 +213,9 @@ fn run_app(
                             .title("Deadline Miss ms")
                             .borders(Borders::ALL),
                     )
-                    .data(&lateness_points)
+                    .data(&deadline_miss_points)
                     .style(Style::default().fg(Color::Red)),
-                bottom[2],
+                bottom[3],
             );
         })?;
 
@@ -413,8 +462,26 @@ fn runtime_telemetry_panel(current: Option<&SegmentObservation>) -> Paragraph<'s
                     Span::raw(format!("{} ms", runtime.estimated_rtt_ms)),
                 ]),
                 Line::from(vec![
-                    label_span("utility score "),
-                    Span::raw(format!("{:.4}", runtime.utility_score)),
+                    label_span("observed score "),
+                    Span::raw(format!(
+                        "{:.4}",
+                        runtime.observed_utility_score.unwrap_or(runtime.utility_score)
+                    )),
+                ]),
+                Line::from(vec![
+                    label_span("smoothed score "),
+                    Span::raw(format!(
+                        "{:.4}",
+                        runtime.smoothed_utility_score.unwrap_or(runtime.utility_score)
+                    )),
+                    Span::raw("  "),
+                    label_span("ewma "),
+                    Span::raw(
+                        runtime
+                            .ewma_weight
+                            .map(|value| format!("{value:.2}"))
+                            .unwrap_or_else(|| "n/a".to_string())
+                    ),
                 ]),
                 Line::from(vec![
                     label_span("ack gain "),
@@ -435,7 +502,84 @@ fn runtime_telemetry_panel(current: Option<&SegmentObservation>) -> Paragraph<'s
 
     Paragraph::new(lines).block(
         Block::default()
-            .title("Runtime Utility Telemetry")
+            .title("AMC Inputs And Signal")
+            .borders(Borders::ALL),
+    )
+}
+
+fn controller_snapshot_panel(current: Option<&SegmentObservation>) -> Paragraph<'static> {
+    let lines = if let Some(observation) = current {
+        match observation
+            .runtime_utility
+            .as_ref()
+            .and_then(|runtime| runtime.controller_snapshot.as_ref())
+        {
+            Some(snapshot) => vec![
+                Line::from(vec![
+                    label_span("phase "),
+                    Span::raw(snapshot.phase.clone()),
+                    Span::raw("  "),
+                    label_span("last event "),
+                    Span::raw(snapshot.last_event.clone()),
+                ]),
+                Line::from(vec![
+                    label_span("cwnd "),
+                    Span::raw(format!(
+                        "{} dg / {} B",
+                        snapshot.congestion_window_datagrams, snapshot.congestion_window_bytes
+                    )),
+                ]),
+                Line::from(vec![
+                    label_span("ssthresh "),
+                    Span::raw(
+                        snapshot
+                            .ssthresh_datagrams
+                            .zip(snapshot.ssthresh_bytes)
+                            .map(|(datagrams, bytes)| format!("{} dg / {} B", datagrams, bytes))
+                            .unwrap_or_else(|| "infinite".to_string())
+                    ),
+                ]),
+                Line::from(vec![
+                    label_span("growth step "),
+                    Span::raw(format!(
+                        "{} dg / {} B",
+                        snapshot.growth_step_datagrams, snapshot.growth_step_bytes
+                    )),
+                    Span::raw("  "),
+                    label_span("mtu "),
+                    Span::raw(format!("{} B", snapshot.current_mtu_bytes)),
+                ]),
+                Line::from(vec![
+                    label_span("initial "),
+                    Span::raw(format!(
+                        "{} dg",
+                        snapshot.initial_window_datagrams
+                    )),
+                    Span::raw("  "),
+                    label_span("min "),
+                    Span::raw(format!("{} dg", snapshot.min_window_datagrams)),
+                ]),
+                Line::from(vec![
+                    label_span("max "),
+                    Span::raw(format!("{} dg", snapshot.max_window_datagrams)),
+                    Span::raw("  "),
+                    label_span("class max "),
+                    Span::raw(format!("{} dg", snapshot.class_max_window_datagrams)),
+                ]),
+            ],
+            None => vec![
+                Line::from("controller snapshot is not present in this raw report"),
+                Line::from("older reports only persist the AMC signal and not cwnd state"),
+                Line::from("regenerate the run with the current code to capture phase and window telemetry"),
+            ],
+        }
+    } else {
+        vec![Line::from("no media observations available")]
+    };
+
+    Paragraph::new(lines).block(
+        Block::default()
+            .title("AMC Controller Snapshot")
             .borders(Borders::ALL),
     )
 }

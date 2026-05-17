@@ -131,7 +131,7 @@ Launch the canonical showcase demo:
 cargo run -p harness -- live-demo --report results/raw/harness/live_realtime_amc_preview_lte_constrained_report.json --speed 1.0
 ```
 
-The live demo is intentionally single-run only. See [docs/live-demo.md](docs/live-demo.md).
+The live demo is intentionally single-run only. It now shows both the AMC signal inputs and, when the report carries the richer schema, the controller snapshot with phase, last event, window, threshold, and growth-step state. See [docs/live-demo.md](docs/live-demo.md).
 
 ### Standalone demo client and server
 

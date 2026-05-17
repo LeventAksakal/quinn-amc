@@ -14,7 +14,7 @@ use tokio::fs;
 use tracing::{debug, info};
 
 const REPORT_KIND: &str = "demo_server_transfer_report";
-const REPORT_SCHEMA_VERSION: u32 = 2;
+const REPORT_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
