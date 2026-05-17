@@ -143,3 +143,34 @@ The current frozen VPS evidence supports a narrow live-primary claim:
 The phase output is therefore a bounded AMC v1 claim, not a claim of broad BBR replacement.
 
 See [docs/amc-milestone.md](docs/amc-milestone.md) for the compact evidence readout and the explicitly deferred AMC v2 follow-up work.
+
+## Phase 5 Frozen Result Families
+
+Phase 5 freezes the result base around four canonical processed artifacts:
+
+- `results/processed/harness/vps_fixed_preset_controller_matrix_summary.json`
+- `results/processed/harness/vps_fixed_preset_controller_matrix_comparison.json`
+- `results/processed/harness/vps_host_live_coexistence_bbr_guardrail_summary.json`
+- `results/processed/harness/vps_host_live_coexistence_bbr_guardrail_comparison.json`
+
+Those files provide complete coverage for the current final evidence families: `10 / 10` complete fixed-matrix groups and `2 / 2` complete fairness-guardrail groups.
+
+### Live final-evidence interpretation
+
+- `wifi_unstable` remains the clearest bounded AMC win cell relative to `new_reno` and `cubic`: AMC matches BBR on deadline-miss rate and useful-media ratio while staying materially better than the loss-based baselines on those same metrics.
+- `lte_constrained` remains the hardest cell overall: AMC improves on `new_reno` and `cubic` for useful delivery and deadline misses, but still trails BBR by a meaningful margin on age of information, tail latency, and overall useful utility.
+- `wired_clean`, `wifi_moderate`, and `lte_moderate` remain neutral or bounded cells for AMC v1: they do not justify a broad claim over BBR, but they remain consistent with the narrower Phase 4 interpretation.
+
+### VOD final-evidence interpretation
+
+- VOD useful delivery and rebuffer behavior remain stable across the frozen matrix.
+- Startup delay remains the main VOD deficit for AMC v1, especially on `lte_constrained` where AMC is slower than every baseline and far behind BBR.
+- VOD therefore remains a bounded supporting evidence family rather than a headline AMC success case.
+
+### Fairness final-evidence interpretation
+
+- The fairness guardrail suite confirms that AMC is not gaming throughput share against BBR.
+- The guardrail still shows that fairness at the throughput-sharing level does not imply freshness parity with BBR on the hardest constrained live path.
+- The fairness claim is therefore narrow and specific: AMC v1 is acceptable under the required BBR guardrail, not universally equivalent to BBR under competition.
+
+See [docs/evidence-freeze.md](docs/evidence-freeze.md) for the exact artifact inventory and include/exclude rules that Phase 6 and Phase 7 must follow.

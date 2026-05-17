@@ -85,6 +85,16 @@ The repository claim after Phase 4 is:
 - AMC v1 does not justify a claim of VOD startup superiority.
 - Phase 5 may freeze the evidence set using this bounded claim without reopening controller design.
 
+## Phase 5 Freeze Boundary
+
+Phase 5 freezes the evidence set that supports the claim above.
+
+- the canonical local evidence inputs are the four processed artifacts for `vps_fixed_preset_controller_matrix` and `vps_host_live_coexistence_bbr_guardrail`
+- those processed files cover `10 / 10` complete single-flow matrix groups and `2 / 2` complete fairness groups
+- local parity and workflow-validation outputs remain useful support surfaces, but they are outside the frozen claim boundary
+
+See [docs/evidence-freeze.md](docs/evidence-freeze.md) for the exact artifact inventory and reproduction contract that now anchors the Phase 4 claim.
+
 ## Explicitly Deferred To AMC v2
 
 - widening `RuntimeUtilityState` beyond the latest sample

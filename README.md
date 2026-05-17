@@ -50,6 +50,16 @@ Phase 4 freezes the controller milestone at AMC v1.
 
 See [docs/amc-milestone.md](docs/amc-milestone.md) for the Phase 4 controller-completion criteria and evidence reading.
 
+## Phase 5 Evidence Freeze
+
+Phase 5 freezes the benchmark evidence set around the two canonical VPS suites already selected earlier in the roadmap.
+
+- final evidence now means the processed outputs for `vps_fixed_preset_controller_matrix` and `vps_host_live_coexistence_bbr_guardrail`
+- local parity outputs remain required regression support, but they are not part of the final evidence claim
+- workflow-validation and exploratory outputs remain explicitly excluded from downstream figure and report work
+
+See [docs/evidence-freeze.md](docs/evidence-freeze.md) for the exact included artifacts, excluded outputs, and reproduction commands that later phases must consume.
+
 ## Config Status
 
 | Status | Configs | Current role |
@@ -260,6 +270,7 @@ See the project notes under `docs/`:
 - [docs/core-idea.md](docs/core-idea.md) for the thesis and scope boundaries
 - [docs/design.md](docs/design.md) for the application-to-transport semantic interface
 - [docs/amc-milestone.md](docs/amc-milestone.md) for the frozen AMC v1 completion boundary and evidence reading
+- [docs/evidence-freeze.md](docs/evidence-freeze.md) for the frozen Phase 5 artifact inventory and reproduction contract
 - [docs/evaluation.md](docs/evaluation.md) for benchmark questions and metrics
 - [docs/methodology.md](docs/methodology.md) for the consolidated experiment plan
 

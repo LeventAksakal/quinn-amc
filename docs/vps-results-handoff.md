@@ -45,6 +45,11 @@ Remote source location on the VPS:
 
 - `/home/leven/quinn-amc/results/processed/harness/`
 
+Phase 5 freeze note:
+
+- the four processed artifacts above are now the frozen local evidence inputs for downstream figure and report work
+- later phases should consume them through [docs/evidence-freeze.md](docs/evidence-freeze.md) rather than treating the entire `results/` tree as final evidence
+
 ## Fixed Matrix Readout
 
 ### Live, `wifi_unstable`
@@ -111,13 +116,17 @@ Interpretation: AMC is not gaming throughput share. Fairness stayed essentially 
 
 The validated coexistence measurements therefore came from running the harness directly on the VPS host with `tc` applied to `lo`, not from the container host-veth runner path.
 
-This split is the current canonical documented workflow, not an accidental omission. Runner unification is deferred to Phase 3.
+This split is the current canonical documented workflow, not an accidental omission. Runner unification remains outside the frozen evidence path and would require a later scoped decision rather than a silent workflow change.
 
-## Recommended Next Work
+## Phase 5 Freeze Outcome
 
-1. Phase 3 should decide whether to extend `scripts/experiments/run_linux_vps_suite.sh` so coexistence runs launch both foreground and competitor clients on the host-veth path, or keep the split workflow model permanently.
-2. Improve AMC live tail latency under `wifi_unstable` and `lte_constrained` without sacrificing the fairness result already achieved.
-3. Reduce AMC VOD startup delay; this remains the clearest VOD deficit after the latest tuning.
+The current result handoff should now be read as a frozen evidence note rather than as an open rerun checkpoint.
+
+- the fixed matrix and host fairness guardrail remain the only canonical final-evidence families
+- the processed artifacts listed in this note are the local figure and report inputs for later phases
+- local parity, workflow-validation, and exploratory outputs remain explicitly outside the final evidence set
+
+Open performance follow-up such as reducing AMC live tail latency or improving VOD startup delay remains valid future work, but it is no longer part of the repository completion path before the evidence freeze.
 
 ## Reproduction Commands
 

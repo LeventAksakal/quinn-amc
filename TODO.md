@@ -4,14 +4,14 @@
 
 - Keep the Phase 1 scope freeze intact: AMC v1 only, live-primary claim framing, mandatory fairness, VPS evidence plus local parity, and a single-run introspection demo.
 - Keep the split canonical workflow documented consistently across README, methodology, VPS handoff notes, and copilot instructions until Phase 3 changes the runner model.
-- Carry the bounded Phase 4 AMC interpretation into the frozen evidence package, figures, and report text without widening the controller claim.
+- Keep the Phase 5 evidence-freeze boundary intact as the repo moves into figure generation and report packaging.
 
 ## Experiment completion
 
 - Keep the fixed network presets stable across reruns and make any later preset change an explicit scope decision rather than quiet tuning.
 - Keep the current split VPS workflow model explicit until a later phase truly adds multi-client docker-runner support; do not blur the compose matrix path and the host fairness path back together.
 - Decide whether the host-side runner should remain server-veth-only or move to explicitly symmetric shaping for later claims.
-- Run an explicit end-to-end regeneration check from `scripts/media/preprocess_streams.sh` through a local harness suite on both packaged assets before calling the replay pipeline frozen.
+- If a later phase needs reruns, keep them tied to the frozen Phase 5 configs and artifact inventory instead of reopening the evidence set casually.
 
 ## AMC follow-up
 

@@ -60,6 +60,15 @@ Phase 4 resolves the controller milestone by freezing repository completion at A
 - The required supporting limitation is now: BBR remains the strongest overall baseline in the fixed matrix, and AMC v1 is not a VOD startup winner.
 - AMC v2 remains explicit future work for richer controller state, broader fairness coverage, and stronger freshness claims.
 
+## Phase 5 Resolution
+
+Phase 5 resolves the benchmark freeze boundary by naming one exact evidence set for the remaining phases.
+
+- The frozen final-evidence set is the canonical VPS fixed-preset matrix plus the canonical VPS host fairness guardrail suite.
+- The authoritative local evidence inputs are the four processed artifacts under `results/processed/harness/` for those two suites.
+- Local parity, workflow-validation, and exploratory outputs remain documented support surfaces, not part of the final evidence claim.
+- The evidence freeze point remains inside the Phase 4 AMC v1 claim: constrained-live gains against the loss-based baselines, fairness safety against BBR, and honest VOD limitations.
+
 ## Phase Overview
 
 ### Phase 1: Define Done And Freeze Scope

@@ -50,6 +50,18 @@ Phase 3 keeps the split workflow model but hardens the artifact contract around 
 - Processed harness outputs embed SHA-256 provenance for the suite config, replay manifest, and raw report used to derive each analysis artifact.
 - The compose VPS runner fails fast when a config requests coexistence, because that path still supports only one foreground demo-client container per run.
 
+## Phase 5 Evidence Freeze
+
+Phase 5 keeps the workflow model and controller boundary fixed, then freezes the benchmark evidence set that later phases are allowed to consume.
+
+- the frozen final-evidence set is the processed output pair for `vps_fixed_preset_controller_matrix` and the processed output pair for `vps_host_live_coexistence_bbr_guardrail`
+- the fixed matrix is complete across `10 / 10` expected matrix groups
+- the fairness guardrail is complete across `2 / 2` expected fairness groups
+- local parity outputs remain required reproducibility support, but they are not part of the final evidence claim
+- workflow-validation and exploratory outputs remain explicitly excluded from later figures and report packaging
+
+The current workspace therefore freezes the processed VPS evidence locally while continuing to rely on the validated VPS handoff note for the authoritative remote source location of the copied VPS artifacts.
+
 ## Workload model
 
 The implementation should stay trace-driven. Use `ffmpeg` and `ffprobe` offline to turn open source clips into replayable segment sets and timing manifests rather than embedding a full player or media pipeline in the Quinn client.
@@ -137,6 +149,7 @@ Operational reproducibility rules in the current repository:
 - Regenerate replay artifacts with `scripts/media/preprocess_streams.sh` whenever segment payloads change.
 - Treat a replay manifest older than any referenced segment file as invalid until regeneration is rerun.
 - Prefer processed outputs whose `input_provenance` matches the suite config, replay manifest, and raw report under review.
+- For the final evidence set, prefer the canonical processed artifacts named in [docs/evidence-freeze.md](docs/evidence-freeze.md) and treat local parity outputs as support-only.
 
 Use loopback only for smoke tests, local bring-up, and the current host-run fairness guardrail. Avoid using two different VPS instances for the main reported results because the public Internet path reduces repeatability.
 
@@ -297,3 +310,5 @@ The report should follow a compact systems-paper structure:
 8. Conclusion and future work
 
 The final report package should bind the frozen configs, exact reproduction commands, processed summaries and comparisons, required figures, bounded interpretation, and reproducibility notes into one reviewer-readable deliverable.
+
+The frozen evidence inventory and include/exclude rules for that package are recorded in [docs/evidence-freeze.md](docs/evidence-freeze.md).
