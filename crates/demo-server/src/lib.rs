@@ -156,7 +156,10 @@ pub struct Args {
     #[arg(long, default_value = "demo-cert.der")]
     pub cert_out: PathBuf,
 
-    #[arg(long, default_value = "results/raw/demo/latest_transfer_report.json")]
+    #[arg(
+        long,
+        default_value = "results/local/raw/demo/latest_transfer_report.json"
+    )]
     pub report_out: PathBuf,
 }
 

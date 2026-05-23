@@ -101,5 +101,6 @@
 - Update `README.md` when the repo shape, build flow, or benchmark entry points change.
 - Update `.github/copilot-instructions.md`, `docs/methodology.md`, and `TODO.md` when the validated experiment workflow or operational constraints change.
 - If `gh` or `gcloud` become part of the expected operator workflow, document that explicitly rather than assuming future agents will infer it.
-- Keep methodology and design notes in `docs/` and treat them as part of the research artifact.
+- Treat `README.md` as the operator/status guide, `docs/methodology.md` as the canonical scope and reproduction spec, and `docs/final-report.md` as the bounded result narrative.
+- Keep focused appendices in `docs/` only when they add unique value, such as `docs/result-schema.md`, `docs/replay-semantics.md`, and `docs/live-demo.md`.
 - Write short, concrete docs that make the experiment path obvious to a future reviewer.

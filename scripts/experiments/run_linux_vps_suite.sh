@@ -10,8 +10,6 @@ CURRENT_RUN_NAME=""
 RESULT_OWNER_USER="${SUDO_USER:-$(id -un)}"
 RESULT_OWNER_GROUP="$(id -gn "$RESULT_OWNER_USER" 2>/dev/null || id -gn)"
 RESULT_OWNER_SPEC="$RESULT_OWNER_USER:$RESULT_OWNER_GROUP"
-RUNNER_LOG_DIR="$WORKSPACE_ROOT/results/raw/harness/runner"
-BUILD_STAMP_PATH="$WORKSPACE_ROOT/results/.vps_suite_build_stamp"
 CLIENT_TIMEOUT_SECONDS="${CLIENT_TIMEOUT_SECONDS:-600}"
 HARNESS_ANALYZE_TIMEOUT_SECONDS="${HARNESS_ANALYZE_TIMEOUT_SECONDS:-600}"
 SERVER_LOG_TAIL_LINES="${SERVER_LOG_TAIL_LINES:-200}"
@@ -41,6 +39,19 @@ require_command timeout
 
 [[ -f "$CONFIG_ABS" ]] || fail "config not found: $CONFIG_ABS"
 [[ -f "$COMPOSE_FILE" ]] || fail "compose file not found: $COMPOSE_FILE"
+
+CONFIG_RESULTS_ROOT_REL="$(jq -r '.results_root' "$CONFIG_ABS")"
+CONFIG_CERT_PATH_REL="$(jq -r '.cert_path' "$CONFIG_ABS")"
+[[ -n "$CONFIG_RESULTS_ROOT_REL" && "$CONFIG_RESULTS_ROOT_REL" != "null" ]] || fail "config $CONFIG_PATH is missing results_root"
+[[ -n "$CONFIG_CERT_PATH_REL" && "$CONFIG_CERT_PATH_REL" != "null" ]] || fail "config $CONFIG_PATH is missing cert_path"
+
+RESULTS_BASE_DIR="$WORKSPACE_ROOT/results"
+RESULTS_ROOT_ABS="$WORKSPACE_ROOT/$CONFIG_RESULTS_ROOT_REL"
+RESULTS_ROOT_IN_CONTAINER="/workspace/$CONFIG_RESULTS_ROOT_REL"
+RUNNER_LOG_DIR="$RESULTS_ROOT_ABS/raw/harness/runner"
+BUILD_STAMP_PATH="$RESULTS_ROOT_ABS/.vps_suite_build_stamp"
+SERVER_CERT_HOST_PATH="$WORKSPACE_ROOT/$CONFIG_CERT_PATH_REL"
+SERVER_CERT_IN_CONTAINER="/workspace/$CONFIG_CERT_PATH_REL"
 
 validate_runner_supported_config() {
   if jq -e '.runs[] | select(.coexistence != null)' "$CONFIG_ABS" >/dev/null 2>&1; then
@@ -157,13 +168,15 @@ remove_output_file() {
 }
 
 prepare_output_paths() {
-  ensure_directory_writable "$WORKSPACE_ROOT/results"
-  ensure_directory_writable "$WORKSPACE_ROOT/results/raw"
-  ensure_directory_writable "$WORKSPACE_ROOT/results/raw/harness"
+  ensure_directory_writable "$RESULTS_BASE_DIR"
+  ensure_directory_writable "$RESULTS_ROOT_ABS"
+  ensure_directory_writable "$(dirname "$SERVER_CERT_HOST_PATH")"
+  ensure_directory_writable "$RESULTS_ROOT_ABS/raw"
+  ensure_directory_writable "$RESULTS_ROOT_ABS/raw/harness"
   ensure_directory_writable "$RUNNER_LOG_DIR"
-  ensure_directory_writable "$WORKSPACE_ROOT/results/processed"
-  ensure_directory_writable "$WORKSPACE_ROOT/results/processed/harness"
-  normalize_result_ownership "$WORKSPACE_ROOT/results"
+  ensure_directory_writable "$RESULTS_ROOT_ABS/processed"
+  ensure_directory_writable "$RESULTS_ROOT_ABS/processed/harness"
+  normalize_result_ownership "$RESULTS_ROOT_ABS"
 }
 
 latest_build_input_epoch() {
@@ -290,7 +303,7 @@ cleanup() {
 
   cleanup_tc_interface
   cleanup_demo_server
-  normalize_result_ownership "$WORKSPACE_ROOT/results"
+  normalize_result_ownership "$RESULTS_ROOT_ABS"
 
   if [[ "$exit_code" -eq 0 ]]; then
     log "cleanup: complete"
@@ -450,7 +463,6 @@ apply_tc_from_scenario() {
 }
 
 RUN_NAMES="$(jq -r '.runs[].name' "$CONFIG_ABS")"
-SERVER_CERT_HOST_PATH="$WORKSPACE_ROOT/results/demo-cert.der"
 REPLAY_MANIFEST_IN_CONTAINER="/workspace/$(jq -r '.replay_manifest' "$CONFIG_ABS")"
 HARNESS_CONFIG_IN_CONTAINER="/workspace/$CONFIG_PATH"
 
@@ -465,8 +477,8 @@ for run_name in $RUN_NAMES; do
   mode="$(get_run_field "$run_name" mode)"
   pace="$(get_run_field "$run_name" pace)"
   vod_deadline_slack_ms="$(get_run_field "$run_name" vod_deadline_slack_ms)"
-  report_in_container="/workspace/results/raw/harness/${run_name}_report.json"
-  report_on_host="$WORKSPACE_ROOT/results/raw/harness/${run_name}_report.json"
+  report_in_container="$RESULTS_ROOT_IN_CONTAINER/raw/harness/${run_name}_report.json"
+  report_on_host="$RESULTS_ROOT_ABS/raw/harness/${run_name}_report.json"
   client_log_path="$(run_log_path client)"
   server_log_path="$(run_log_path server)"
   tc_log_path="$(run_log_path tc)"
@@ -492,7 +504,7 @@ for run_name in $RUN_NAMES; do
 
   server_start_epoch="$(date +%s)"
   DEMO_SERVER_REPORT_OUT="$report_in_container" \
-  DEMO_SERVER_CERT_OUT="/workspace/results/demo-cert.der" \
+  DEMO_SERVER_CERT_OUT="$SERVER_CERT_IN_CONTAINER" \
   DEMO_SERVER_PORT=5001 \
   docker compose -f "$COMPOSE_FILE" --profile demo-server up -d demo-server
 
@@ -515,7 +527,7 @@ for run_name in $RUN_NAMES; do
     env \
     DEMO_CLIENT_SERVER="$server_container_ip:5001" \
     DEMO_CLIENT_SERVER_NAME="localhost" \
-    DEMO_CLIENT_CERT="/workspace/results/demo-cert.der" \
+    DEMO_CLIENT_CERT="$SERVER_CERT_IN_CONTAINER" \
     DEMO_CLIENT_REPLAY_MANIFEST="$REPLAY_MANIFEST_IN_CONTAINER" \
     DEMO_CLIENT_PACE="$pace" \
     DEMO_CLIENT_MODE="$mode" \
@@ -551,7 +563,7 @@ for run_name in $RUN_NAMES; do
     fail "client command failed for $run_name with exit code $client_status"
   fi
 
-  normalize_result_ownership "$WORKSPACE_ROOT/results"
+  normalize_result_ownership "$RESULTS_ROOT_ABS"
   log "client completed: run=$run_name report=$report_on_host client_log=$client_log_path timing_log=$timing_log_path"
 
   cleanup_tc_interface
@@ -578,6 +590,6 @@ if [[ "$analysis_status" -ne 0 ]]; then
   fail "harness analyze-suite failed with exit code $analysis_status"
 fi
 
-normalize_result_ownership "$WORKSPACE_ROOT/results"
+normalize_result_ownership "$RESULTS_ROOT_ABS"
 CURRENT_RUN_NAME=""
-log "suite analysis written under $WORKSPACE_ROOT/results/processed/harness"
+log "suite analysis written under $RESULTS_ROOT_ABS/processed/harness"

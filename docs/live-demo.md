@@ -10,7 +10,7 @@ Its job is not to compare controllers side by side. Its job is to let a reviewer
 
 The showcase raw report is:
 
-- `results/raw/harness/live_realtime_amc_preview_lte_constrained_report.json`
+- `results/vps/raw/harness/live_realtime_amc_preview_lte_constrained_report.json`
 
 This run comes from the frozen fixed-preset VPS matrix and corresponds to the hardest constrained live preset discussed in the final report.
 
@@ -23,13 +23,13 @@ Why this run was chosen:
 If the raw report is missing locally, retrieve exactly this file from the VPS rather than swapping in a support-only local report:
 
 ```powershell
-gcloud compute scp quinn-amc-vps:/home/leven/quinn-amc/results/raw/harness/live_realtime_amc_preview_lte_constrained_report.json results/raw/harness/live_realtime_amc_preview_lte_constrained_report.json --zone europe-west6-c
+gcloud compute scp quinn-amc-vps:/home/leven/quinn-amc/results/vps/raw/harness/live_realtime_amc_preview_lte_constrained_report.json results/vps/raw/harness/live_realtime_amc_preview_lte_constrained_report.json --zone europe-west6-c
 ```
 
 ## Launch
 
 ```powershell
-cargo run -p harness -- live-demo --report results/raw/harness/live_realtime_amc_preview_lte_constrained_report.json --speed 1.0
+cargo run -p harness -- live-demo --report results/vps/raw/harness/live_realtime_amc_preview_lte_constrained_report.json --speed 1.0
 ```
 
 Controls:

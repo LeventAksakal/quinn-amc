@@ -476,8 +476,8 @@ fn file_name(path: &Path) -> Result<String> {
 
 fn rewrite_report_links(report: &str) -> String {
     report
-        .replace("../results/figures/harness/", "figures/")
-        .replace("../results/processed/harness/", "artifacts/")
+        .replace("../results/vps/figures/harness/", "figures/")
+        .replace("../results/vps/processed/harness/", "artifacts/")
 }
 
 fn build_reproducibility_note(suites: &[PackagedSuiteInput], figure_count: usize) -> String {
@@ -488,7 +488,7 @@ fn build_reproducibility_note(suites: &[PackagedSuiteInput], figure_count: usize
         .join("\n");
 
     format!(
-        "# Reproducibility\n\nThis package was assembled from the frozen Phase 5 and Phase 6 artifacts only.\n\n## Canonical suites\n{suite_names}\n\n## Canonical VPS commands\n\n```bash\ncd /home/leven/quinn-amc\nsudo bash scripts/experiments/run_linux_vps_suite.sh configs/harness/vps_fixed_preset_controller_matrix.json\nsource \"$HOME/.cargo/env\"\ncargo build -p harness\nsudo ./target/debug/harness run-suite --config configs/harness/vps_host_live_coexistence_bbr_guardrail.json\nsudo chown -R \"$USER\":\"$USER\" results\n```\n\n## Canonical figure commands\n\n```powershell\ncargo run -p harness -- plot-suite --comparison results/processed/harness/vps_fixed_preset_controller_matrix_comparison.json --output-dir results/figures/harness\ncargo run -p harness -- plot-suite --comparison results/processed/harness/vps_host_live_coexistence_bbr_guardrail_comparison.json --output-dir results/figures/harness\n```\n\n## Package validation\n\n- expected figure count: `{figure_count}`\n- accepted evidence families: `{}` and `{}`\n- excluded evidence families remain outside this package even if they exist elsewhere under `results/`\n",
+        "# Reproducibility\n\nThis package was assembled from the frozen Phase 5 and Phase 6 artifacts only.\n\n## Canonical suites\n{suite_names}\n\n## Canonical VPS commands\n\n```bash\ncd /home/leven/quinn-amc\nsudo bash scripts/experiments/run_linux_vps_suite.sh configs/harness/vps_fixed_preset_controller_matrix.json\nsource \"$HOME/.cargo/env\"\ncargo build -p harness\nsudo ./target/debug/harness run-suite --config configs/harness/vps_host_live_coexistence_bbr_guardrail.json\nsudo chown -R \"$USER\":\"$USER\" results/vps\n```\n\n## Canonical figure commands\n\n```powershell\ncargo run -p harness -- plot-suite --comparison results/vps/processed/harness/vps_fixed_preset_controller_matrix_comparison.json --output-dir results/vps/figures/harness\ncargo run -p harness -- plot-suite --comparison results/vps/processed/harness/vps_host_live_coexistence_bbr_guardrail_comparison.json --output-dir results/vps/figures/harness\n```\n\n## Package validation\n\n- expected figure count: `{figure_count}`\n- accepted evidence families: `{}` and `{}`\n- excluded evidence families remain outside this package even if they exist elsewhere under `results/`\n",
         MATRIX_SUITE_NAME, FAIRNESS_SUITE_NAME,
     )
 }
@@ -526,7 +526,7 @@ mod tests {
 
     #[test]
     fn report_links_are_rewritten_for_packaged_copy() {
-        let original = "[throughput](../results/figures/harness/example.svg) and [comparison](../results/processed/harness/example.json)";
+        let original = "[throughput](../results/vps/figures/harness/example.svg) and [comparison](../results/vps/processed/harness/example.json)";
         let rewritten = rewrite_report_links(original);
         assert!(rewritten.contains("figures/example.svg"));
         assert!(rewritten.contains("artifacts/example.json"));
@@ -535,7 +535,7 @@ mod tests {
     #[test]
     fn comparison_paths_map_to_summary_paths() {
         let summary = summary_path_for_comparison(Path::new(
-            "results/processed/harness/vps_fixed_preset_controller_matrix_comparison.json",
+            "results/vps/processed/harness/vps_fixed_preset_controller_matrix_comparison.json",
         ))
         .expect("summary path");
         assert_eq!(

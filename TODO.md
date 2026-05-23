@@ -6,7 +6,7 @@ Repository completion is reached at the AMC v1 boundary. This file now tracks on
 
 - Keep the AMC v1 scope freeze intact: live-primary claim framing, mandatory fairness, VPS evidence as the canonical report surface, and the single-run introspection demo.
 - Keep the split canonical VPS workflow explicit until a later change truly adds multi-client docker-runner coexistence support.
-- Keep the Phase 5 evidence-freeze boundary intact whenever figures, reports, or support reruns are revisited.
+- Keep the canonical evidence boundary intact whenever figures, reports, or support reruns are revisited.
 - Keep `README.md`, `docs/methodology.md`, and `.github/copilot-instructions.md` synchronized whenever the validated operator workflow changes.
 - Keep config classification explicit so final evidence, local parity, workflow-validation suites, and exploratory configs do not drift back together.
 

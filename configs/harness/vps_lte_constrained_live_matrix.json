@@ -2,10 +2,10 @@
   "suite_name": "vps_lte_constrained_live_matrix",
   "host": "demo-server",
   "base_port": 5001,
-  "cert_path": "results/demo-cert.der",
+  "cert_path": "results/vps/demo-cert.der",
   "replay_manifest": "data/processed/manifests/sintel_trailer_replay.json",
   "server_startup_delay_ms": 500,
-  "results_root": "results",
+  "results_root": "results/vps",
   "network_scenarios": [
     {
       "name": "lte_constrained",

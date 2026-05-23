@@ -49,7 +49,7 @@ enum Command {
     PlotSuite {
         #[arg(long)]
         comparison: PathBuf,
-        #[arg(long, default_value = "results/figures/harness")]
+        #[arg(long, default_value = "results/vps/figures/harness")]
         output_dir: PathBuf,
     },
     PackageReport {
@@ -57,17 +57,17 @@ enum Command {
         report: PathBuf,
         #[arg(
             long,
-            default_value = "results/processed/harness/vps_fixed_preset_controller_matrix_comparison.json"
+            default_value = "results/vps/processed/harness/vps_fixed_preset_controller_matrix_comparison.json"
         )]
         matrix_comparison: PathBuf,
         #[arg(
             long,
-            default_value = "results/processed/harness/vps_host_live_coexistence_bbr_guardrail_comparison.json"
+            default_value = "results/vps/processed/harness/vps_host_live_coexistence_bbr_guardrail_comparison.json"
         )]
         fairness_comparison: PathBuf,
-        #[arg(long, default_value = "results/figures/harness")]
+        #[arg(long, default_value = "results/vps/figures/harness")]
         figure_dir: PathBuf,
-        #[arg(long, default_value = "results/reports/final")]
+        #[arg(long, default_value = "results/vps/reports/final")]
         output_dir: PathBuf,
     },
     LiveDemo {
@@ -1101,8 +1101,8 @@ mod tests {
         let manifest_path = write_replay_fixture(&root).await?;
         let replay_input = prepare_replay_input(&manifest_path).await?;
 
-        let cert_path = root.join("results/test-cert.der");
-        let report_path = root.join("results/raw/harness/test_report.json");
+        let cert_path = root.join("results/local/test-cert.der");
+        let report_path = root.join("results/local/raw/harness/test_report.json");
         let server = Arc::new(
             SuiteServer::bind("127.0.0.1:0".parse::<SocketAddr>()?, cert_path.clone()).await?,
         );

@@ -26,9 +26,9 @@ services:
         "--bind",
         "${DEMO_SERVER_BIND:-0.0.0.0:5001}",
         "--cert-out",
-        "${DEMO_SERVER_CERT_OUT:-/workspace/results/demo-cert.der}",
+        "${DEMO_SERVER_CERT_OUT:-/workspace/results/local/demo-cert.der}",
         "--report-out",
-        "${DEMO_SERVER_REPORT_OUT:-/workspace/results/raw/demo/container_demo_report.json}"
+        "${DEMO_SERVER_REPORT_OUT:-/workspace/results/local/raw/demo/container_demo_report.json}"
       ]
     networks:
       - quinn-amc
@@ -50,7 +50,7 @@ services:
         "--server-name",
         "${DEMO_CLIENT_SERVER_NAME:-localhost}",
         "--cert",
-        "${DEMO_CLIENT_CERT:-/workspace/results/demo-cert.der}",
+        "${DEMO_CLIENT_CERT:-/workspace/results/local/demo-cert.der}",
         "--replay-manifest",
         "${DEMO_CLIENT_REPLAY_MANIFEST:-/workspace/data/processed/manifests/sintel_trailer_replay.json}",
         "--pace",

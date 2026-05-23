@@ -465,14 +465,18 @@ fn runtime_telemetry_panel(current: Option<&SegmentObservation>) -> Paragraph<'s
                     label_span("observed score "),
                     Span::raw(format!(
                         "{:.4}",
-                        runtime.observed_utility_score.unwrap_or(runtime.utility_score)
+                        runtime
+                            .observed_utility_score
+                            .unwrap_or(runtime.utility_score)
                     )),
                 ]),
                 Line::from(vec![
                     label_span("smoothed score "),
                     Span::raw(format!(
                         "{:.4}",
-                        runtime.smoothed_utility_score.unwrap_or(runtime.utility_score)
+                        runtime
+                            .smoothed_utility_score
+                            .unwrap_or(runtime.utility_score)
                     )),
                     Span::raw("  "),
                     label_span("ewma "),
@@ -480,7 +484,7 @@ fn runtime_telemetry_panel(current: Option<&SegmentObservation>) -> Paragraph<'s
                         runtime
                             .ewma_weight
                             .map(|value| format!("{value:.2}"))
-                            .unwrap_or_else(|| "n/a".to_string())
+                            .unwrap_or_else(|| "n/a".to_string()),
                     ),
                 ]),
                 Line::from(vec![
@@ -536,7 +540,7 @@ fn controller_snapshot_panel(current: Option<&SegmentObservation>) -> Paragraph<
                             .ssthresh_datagrams
                             .zip(snapshot.ssthresh_bytes)
                             .map(|(datagrams, bytes)| format!("{} dg / {} B", datagrams, bytes))
-                            .unwrap_or_else(|| "infinite".to_string())
+                            .unwrap_or_else(|| "infinite".to_string()),
                     ),
                 ]),
                 Line::from(vec![
@@ -551,10 +555,7 @@ fn controller_snapshot_panel(current: Option<&SegmentObservation>) -> Paragraph<
                 ]),
                 Line::from(vec![
                     label_span("initial "),
-                    Span::raw(format!(
-                        "{} dg",
-                        snapshot.initial_window_datagrams
-                    )),
+                    Span::raw(format!("{} dg", snapshot.initial_window_datagrams)),
                     Span::raw("  "),
                     label_span("min "),
                     Span::raw(format!("{} dg", snapshot.min_window_datagrams)),
@@ -570,7 +571,9 @@ fn controller_snapshot_panel(current: Option<&SegmentObservation>) -> Paragraph<
             None => vec![
                 Line::from("controller snapshot is not present in this raw report"),
                 Line::from("older reports only persist the AMC signal and not cwnd state"),
-                Line::from("regenerate the run with the current code to capture phase and window telemetry"),
+                Line::from(
+                    "regenerate the run with the current code to capture phase and window telemetry",
+                ),
             ],
         }
     } else {
@@ -687,7 +690,7 @@ mod tests {
     #[test]
     fn canonical_showcase_detection_matches_expected_report_name() {
         let report = sample_report(&format!(
-            "results/raw/harness/{}",
+            "results/vps/raw/harness/{}",
             CANONICAL_SHOWCASE_REPORT
         ));
         assert!(is_canonical_showcase(&report));
@@ -695,7 +698,8 @@ mod tests {
 
     #[test]
     fn noncanonical_reports_are_marked_support_only() {
-        let report = sample_report("results/raw/harness/live_realtime_amc_preview_report.json");
+        let report =
+            sample_report("results/local/raw/harness/live_realtime_amc_preview_report.json");
         assert!(!is_canonical_showcase(&report));
     }
 

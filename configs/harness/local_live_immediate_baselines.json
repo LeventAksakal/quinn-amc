@@ -2,10 +2,10 @@
   "suite_name": "local_live_immediate_baselines",
   "host": "127.0.0.1",
   "base_port": 5300,
-  "cert_path": "demo-cert.der",
+  "cert_path": "results/local/demo-cert.der",
   "replay_manifest": "data/processed/manifests/sintel_trailer_replay.json",
   "server_startup_delay_ms": 250,
-  "results_root": "results",
+  "results_root": "results/local",
   "network_scenarios": [
     {
       "name": "local_loopback",
